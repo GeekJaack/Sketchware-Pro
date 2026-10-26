@@ -681,6 +681,7 @@ public class Fx {
             case "intentSetData":
                 opcode = String.format("%s.setData(Uri.parse(%s));", params.get(0), params.get(1));
                 break;
+            case "intentSetClass":
             case "intentSetScreen":
                 opcode = String.format("%s.setClass(getApplicationContext(), %s.class);", params.get(0), params.get(1));
                 break;

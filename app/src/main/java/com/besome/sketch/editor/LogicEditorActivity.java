@@ -251,13 +251,21 @@ public class LogicEditorActivity extends BaseAppCompatActivity implements View.O
                                 Rs parameterBlock = blockIdsAndBlocks.get(Integer.valueOf(parameter.substring(1)));
                                 if (parameterBlock != null) {
                                     int finalI = i;
-                                    runOnUiThread(() -> block.a((Ts) block.V.get(finalI), parameterBlock));
+                                    runOnUiThread(() -> {
+                                        if (finalI < block.V.size()) {
+                                            block.a((Ts) block.V.get(finalI), parameterBlock);
+                                        }
+                                    });
                                 }
                             } else {
                                 int finalI = i;
                                 runOnUiThread(() -> {
-                                    ((Ss) block.V.get(finalI)).setArgValue(parameter);
-                                    block.m();
+                                    if (finalI < block.V.size()) {
+                                        if (block.V.get(finalI) instanceof Ss) {
+                                            ((Ss) block.V.get(finalI)).setArgValue(parameter);
+                                            block.m();
+                                        }
+                                    }
                                 });
                             }
                         }
@@ -838,11 +846,13 @@ public class LogicEditorActivity extends BaseAppCompatActivity implements View.O
                         if (blockId > 0) {
                             Rs parameterBlock = o.a(blockId);
                             if (parameterBlock != null) {
-                                block.a((Ts) block.V.get(i), parameterBlock);
+                                if (i < block.V.size()) {
+                                    block.a((Ts) block.V.get(i), parameterBlock);
+                                }
                             }
                         }
                     } else {
-                        if (block.V.get(i) instanceof Ss ss) {
+                        if (i < block.V.size() && block.V.get(i) instanceof Ss ss) {
                             String javaName = M.getJavaName();
                             String xmlName = M.getXmlName();
                             if (eventName.equals("onBindCustomView")) {

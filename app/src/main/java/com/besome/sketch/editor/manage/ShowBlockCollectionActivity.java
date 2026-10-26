@@ -90,12 +90,14 @@ public class ShowBlockCollectionActivity extends BaseAppCompatActivity implement
                     if (parameter != null && !parameter.isEmpty()) {
                         if (parameter.charAt(0) == '@') {
                             Rs parameterBlock = blockIdsWithBlocks.get(Integer.valueOf(parameter.substring(1)));
-                            if (parameterBlock != null) {
+                            if (parameterBlock != null && i < block.V.size()) {
                                 block.a((Ts) block.V.get(i), parameterBlock);
                             }
                         } else {
-                            ((Ss) block.V.get(i)).setArgValue(parameter);
-                            block.m();
+                            if (i < block.V.size() && block.V.get(i) instanceof Ss ss) {
+                                ss.setArgValue(parameter);
+                                block.m();
+                            }
                         }
                     }
                 }
