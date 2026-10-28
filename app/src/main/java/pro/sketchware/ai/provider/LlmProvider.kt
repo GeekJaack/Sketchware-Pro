@@ -370,11 +370,15 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
         systemPrompt: String,
         messages: List<LlmTurnMessage>,
         tools: List<ToolDefinition>,
-        allowPromptToolFallback: Boolean = true
+        allowPromptToolFallback: Boolean = true,
+        allowTemperature: Boolean = true
     ): LlmResponse {
         val root = JsonObject()
         root.addProperty("model", modelId)
-        root.addProperty("temperature", 0.2)
+        // Rationale: o-series/gpt-5 hanya menerima temperature default (1) dan menolak nilai lain dengan HTTP 400.
+        if (allowTemperature && supportsCustomTemperature(modelId)) {
+            root.addProperty("temperature", 0.2)
+        }
         root.addProperty("stream", false)
 
         val msgArray = JsonArray()
@@ -444,7 +448,8 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
             root.addProperty("tool_choice", "auto")
         }
 
-        val endpoint = if (baseUrl.endsWith("/chat/completions")) baseUrl else "$baseUrl/chat/completions"
+        val normalizedBase = normalizeOpenAiBaseUrl(baseUrl)
+        val endpoint = if (normalizedBase.endsWith("/chat/completions")) normalizedBase else "$normalizedBase/chat/completions"
         val reqBuilder = Request.Builder()
             .url(endpoint)
             .post(gson.toJson(root).toRequestBody(jsonMediaType))
@@ -463,6 +468,15 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
             val bodyStr = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val detail = extractErrorDetail(bodyStr)
+                // Gateway menolak temperature (model reasoning / provider tertentu): ulangi tanpa parameter tersebut.
+                if (allowTemperature && response.code in 400..422 && root.has("temperature") &&
+                    detail.contains("temperature", ignoreCase = true)
+                ) {
+                    return callOpenAiCompatible(
+                        baseUrl, apiKey, modelId, systemPrompt, messages, tools,
+                        allowPromptToolFallback = allowPromptToolFallback, allowTemperature = false
+                    )
+                }
                 // If a custom/free model gateway rejects the 'tools' schema (HTTP 400/422), retry using inline <tool_call> prompt mode
                 if (allowPromptToolFallback && tools.isNotEmpty() && (response.code == 400 || response.code == 422) &&
                     (detail.contains("tool", ignoreCase = true) || detail.contains("function", ignoreCase = true) || detail.contains("schema", ignoreCase = true))
@@ -483,15 +497,43 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
                             else -> m
                         }
                     }
-                    return callOpenAiCompatible(baseUrl, apiKey, modelId, fallbackSys, fallbackMsgs, emptyList(), allowPromptToolFallback = false)
+                    return callOpenAiCompatible(baseUrl, apiKey, modelId, fallbackSys, fallbackMsgs, emptyList(), allowPromptToolFallback = false, allowTemperature = allowTemperature)
                 }
-                val msg = "API Error (${response.code}): $detail"
+                val hint = when (response.code) {
+                    401 -> " [API Key ditolak/salah]"
+                    404 -> " [Endpoint/model tidak ditemukan: $endpoint]"
+                    else -> ""
+                }
+                val msg = "API Error (${response.code}): $detail$hint"
                 if (isTransientHttpStatus(response.code)) {
                     throw TransientLlmException(msg, response.code)
                 }
                 throw IOException(msg)
             }
             return parseOpenAiResponse(bodyStr)
+        }
+    }
+
+    private fun supportsCustomTemperature(modelId: String): Boolean {
+        val id = modelId.substringAfterLast('/').lowercase()
+        return !(id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4") || id.startsWith("gpt-5"))
+    }
+
+    /**
+     * Rationale: user sering mengisi host saja (https://api.openai.com) sehingga request mendarat di
+     * /chat/completions tanpa /v1 -> 404. Tambahkan path default hanya jika base URL tidak punya path sama sekali.
+     */
+    internal fun normalizeOpenAiBaseUrl(baseUrl: String): String {
+        val clean = baseUrl.trim().trimEnd('/')
+        val schemeEnd = clean.indexOf("://")
+        if (schemeEnd < 0) return clean
+        val hasPath = clean.indexOf('/', schemeEnd + 3) >= 0
+        if (hasPath) return clean
+        val host = clean.substring(schemeEnd + 3).lowercase()
+        return when {
+            host == "api.openai.com" -> "$clean/v1"
+            host == "openrouter.ai" -> "$clean/api/v1"
+            else -> clean
         }
     }
 

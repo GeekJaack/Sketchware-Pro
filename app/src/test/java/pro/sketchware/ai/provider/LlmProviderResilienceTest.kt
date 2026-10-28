@@ -81,4 +81,13 @@ class LlmProviderResilienceTest {
             assertTrue(lang.systemPromptDirective().contains("LANGUAGE RULE"))
         }
     }
+
+    @Test
+    fun `normalizeOpenAiBaseUrl appends default path only for bare known hosts`() {
+        assertEquals("https://api.openai.com/v1", client.normalizeOpenAiBaseUrl("https://api.openai.com/"))
+        assertEquals("https://api.openai.com/v1", client.normalizeOpenAiBaseUrl("https://api.openai.com/v1"))
+        assertEquals("https://openrouter.ai/api/v1", client.normalizeOpenAiBaseUrl("https://openrouter.ai"))
+        assertEquals("http://192.168.1.5:11434/v1", client.normalizeOpenAiBaseUrl("http://192.168.1.5:11434/v1/"))
+        assertEquals("http://192.168.1.5:11434", client.normalizeOpenAiBaseUrl("http://192.168.1.5:11434"))
+    }
 }
