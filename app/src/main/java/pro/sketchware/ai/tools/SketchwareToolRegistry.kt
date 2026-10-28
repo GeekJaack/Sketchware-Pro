@@ -454,6 +454,89 @@ Returns a session_id used by terminal_send / terminal_read / terminal_stop.""",
             isWriteTool = true
         ),
         ToolDefinition(
+            name = "manage_manifest",
+            description = "Edit the AndroidManifest injection exactly like the app's Manifest Manager (Injection/androidmanifest). Actions: list; set_application_attr / remove_application_attr (<application> attributes, e.g. android:usesCleartextTraffic=\"true\"); set_activity_attr / remove_activity_attr (attribute on one Activity or 'all'); add_app_component / remove_app_component (service, receiver, provider, meta-data, uses-library XML placed inside <application>); add_activity_component / remove_activity_component (intent-filter/meta-data inside one <activity>); set_launcher. Prefer this over writing manifest files by hand. Note: Sketchware's manifest generator cannot emit <uses-feature>.",
+            parameters = listOf(
+                ToolParameterProperty("action", "string", "list | set_application_attr | remove_application_attr | set_activity_attr | remove_activity_attr | add_app_component | remove_app_component | add_activity_component | remove_activity_component | set_launcher (default list)", required = false),
+                ToolParameterProperty("attribute", "string", "Exactly one attribute as prefix:name=\"value\" (for set_*_attr).", required = false),
+                ToolParameterProperty("attribute_name", "string", "Attribute name to remove, e.g. android:usesCleartextTraffic (for remove_*_attr).", required = false),
+                ToolParameterProperty("activity", "string", "Activity class name (MainActivity) or screen name (main); 'all' = every Activity. Used by *_activity_* actions.", required = false),
+                ToolParameterProperty("xml", "string", "XML snippet for add_*_component, e.g. <service android:name=\".SyncService\" android:exported=\"false\"/>. Use .ClassName or a fully-qualified name.", required = false),
+                ToolParameterProperty("component_name", "string", "android:name of the component to remove (remove_app_component).", required = false),
+                ToolParameterProperty("tag", "string", "Optional tag filter for remove_app_component (service, receiver, provider...).", required = false),
+                ToolParameterProperty("contains", "string", "Text that identifies the element to remove inside an Activity (remove_activity_component); omit to remove all.", required = false),
+                ToolParameterProperty("screen", "string", "Screen name for set_launcher, e.g. main (letters/digits/underscore).", required = false)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
+            name = "manage_permissions",
+            description = "List, add, remove or replace the project's permissions (Permission Manager). Short names are expanded (CAMERA -> android.permission.CAMERA); names containing a dot are kept as-is (e.g. com.android.vending.BILLING).",
+            parameters = listOf(
+                ToolParameterProperty("action", "string", "list | add | remove | set (default list)", required = false),
+                ToolParameterProperty("permissions", "string", "Permission names as a comma-separated list or JSON array string, e.g. [\"INTERNET\",\"CAMERA\"].", required = false)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
+            name = "manage_res_values",
+            description = "Edit ONE entry at a time in files/resource/values*/ XML (strings, colors, dimens, styles, themes, arrays, bools, integers) without overwriting the rest of the file. Actions: list_files; list; get; set (add or update); delete; delete_style_item. Strings: apostrophes/quotes are escaped automatically. Styles are merged (given items added/updated, others kept).",
+            parameters = listOf(
+                ToolParameterProperty("action", "string", "list_files | list | get | set | delete | delete_style_item (default list)", required = false),
+                ToolParameterProperty("file", "string", "strings | colors | dimens | styles | themes | arrays | bools | integers | custom name (default strings)", required = false),
+                ToolParameterProperty("variant", "string", "'' = values, 'night' = values-night, or a qualifier like v21 / id / values-sw600dp.", required = false),
+                ToolParameterProperty("name", "string", "Resource name, e.g. app_name or colorPrimary or AppTheme.Dark.", required = false),
+                ToolParameterProperty("type", "string", "string | color | dimen | bool | integer | style | string-array | integer-array | array (default derived from file).", required = false),
+                ToolParameterProperty("value", "string", "Value for string/color/dimen/bool/integer, e.g. #FF6200EE, 16dp, true.", required = false),
+                ToolParameterProperty("parent", "string", "Parent style for type=style ('' removes the parent).", required = false),
+                ToolParameterProperty("items", "string", "JSON passed as a string. For type=style: {\"android:textColor\":\"@color/x\"}. For arrays: [\"a\",\"b\"].", required = false),
+                ToolParameterProperty("item_name", "string", "Style item to remove (delete_style_item).", required = false),
+                ToolParameterProperty("translatable", "boolean", "Set false for non-translatable strings.", required = false)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
+            name = "manage_java_files",
+            description = "Manage the project's Java/Kotlin sources (Java manager) with correct packages and manifest registration. Actions: list; list_manifest; create (templates activity/service/receiver/class, java or kotlin, or your own content); rename (updates class name and manifest lists); delete; validate (package vs folder, public class vs file name, brace balance, dangling manifest entries); register_manifest / unregister_manifest (activity | service | broadcast). The package of a file is <project package>.<folder path>.",
+            parameters = listOf(
+                ToolParameterProperty("action", "string", "list | list_manifest | create | rename | delete | validate | register_manifest | unregister_manifest (default list)", required = false),
+                ToolParameterProperty("path", "string", "File path relative to files/java, e.g. utils/Helper.java (rename, delete, validate, register_manifest, unregister_manifest).", required = false),
+                ToolParameterProperty("package_subpath", "string", "Sub-package folder for create, e.g. net.http or net/http (empty = project root package).", required = false),
+                ToolParameterProperty("class_name", "string", "Class name for create.", required = false),
+                ToolParameterProperty("template", "string", "activity | service | receiver | class (default class).", required = false),
+                ToolParameterProperty("language", "string", "java | kotlin (default java).", required = false),
+                ToolParameterProperty("content", "string", "Full source for create; the package line is fixed automatically to match the folder.", required = false),
+                ToolParameterProperty("register_as", "string", "activity | service | broadcast: also register the new class in the manifest (create).", required = false),
+                ToolParameterProperty("kind", "string", "activity | service | broadcast (register_manifest / unregister_manifest).", required = false),
+                ToolParameterProperty("new_name", "string", "New class name (rename).", required = false),
+                ToolParameterProperty("overwrite", "boolean", "Allow create to overwrite an existing file (default false).", required = false)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
+            name = "manage_native_libs",
+            description = "List, add or remove native libraries (.so) per ABI folder (armeabi, armeabi-v7a, arm64-v8a, x86, x86_64). add verifies the ELF header matches the ABI so a wrong-architecture library is rejected.",
+            parameters = listOf(
+                ToolParameterProperty("action", "string", "list | add | remove (default list)", required = false),
+                ToolParameterProperty("abi", "string", "ABI folder name.", required = false),
+                ToolParameterProperty("source_path", "string", "Absolute path of the .so to copy in (add).", required = false),
+                ToolParameterProperty("file_name", "string", "Optional target file name ending in .so (add).", required = false),
+                ToolParameterProperty("name", "string", "File name to remove (remove).", required = false)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
+            name = "manage_build_options",
+            description = "Read or change project build options as the app stores them: proguard, r8, proguard_debug, stringfog, min_sdk, target_sdk, app_class, viewbinding, xml_command, disable_old_methods, bridgeless_themes; plus the custom ProGuard rules file (get_rules, set_rules, append_rules). Run save_and_verify_compile after changing build options.",
+            parameters = listOf(
+                ToolParameterProperty("action", "string", "list | set | get_rules | set_rules | append_rules (default list)", required = false),
+                ToolParameterProperty("option", "string", "Option name for set.", required = false),
+                ToolParameterProperty("value", "string", "true/false, a number (SDK) or a class name depending on the option.", required = false),
+                ToolParameterProperty("content", "string", "ProGuard rules text for set_rules / append_rules.", required = false)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
             name = "terminal_list",
             description = "List all active terminal sessions with engine, liveness, exit code, and age.",
             parameters = emptyList(),
@@ -1031,6 +1114,13 @@ Actions:
                     val sessionId = args.str("session_id")
                     if (TerminalSessionManager.stop(sessionId)) "Session '$sessionId' dihentikan." else "Error: session '$sessionId' tidak ditemukan."
                 }
+
+                "manage_manifest" -> ManifestTool.execute(scId, args)
+                "manage_permissions" -> PermissionTool.execute(scId, args)
+                "manage_res_values" -> ResValuesTool.execute(scId, args)
+                "manage_java_files" -> JavaFilesTool.execute(scId, args)
+                "manage_native_libs" -> NativeLibsTool.execute(scId, args)
+                "manage_build_options" -> BuildOptionsTool.execute(scId, args)
 
                 "terminal_resize" -> {
                     val sessionId = args.str("session_id")
