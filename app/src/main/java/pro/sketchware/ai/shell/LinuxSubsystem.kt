@@ -32,6 +32,31 @@ object LinuxSubsystem {
     @Volatile
     private var autoInstallAttempted = false
 
+    @Volatile
+    private var autoInstallFailures = 0
+
+    @Volatile
+    private var lastAutoInstallAt = 0L
+
+    @Volatile
+    private var lastErrorMessage: String? = null
+
+    private const val MAX_AUTO_INSTALL_FAILURES = 3
+    private const val AUTO_INSTALL_RETRY_DELAY_MS = 30_000L
+
+    /** Most recent setup/bootstrap failure (shown by [statusReport]), or null. */
+    fun lastError(): String? = lastErrorMessage
+
+    fun recordError(what: String, t: Throwable?, detail: String? = null) {
+        val cause = t?.let { " — ${it.javaClass.simpleName}: ${it.message}" } ?: ""
+        val extra = detail?.takeIf { it.isNotBlank() }?.let { " [$it]" } ?: ""
+        lastErrorMessage = what + cause + extra
+    }
+
+    fun clearError() {
+        lastErrorMessage = null
+    }
+
     @JvmStatic
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -52,9 +77,40 @@ object LinuxSubsystem {
             return
         }
         if (ctx() == null) return
-        autoInstallAttempted = true
+        if (autoInstallFailures >= MAX_AUTO_INSTALL_FAILURES) return
+        val now = System.currentTimeMillis()
+        if (autoInstallFailures > 0 && now - lastAutoInstallAt < AUTO_INSTALL_RETRY_DELAY_MS) return
+        lastAutoInstallAt = now
         try {
-            installFromAssets()
+            val report = installFromAssets()
+            if (isProotInstalled() && installedDistros().isNotEmpty()) {
+                autoInstallAttempted = true
+                clearError()
+            } else {
+                autoInstallFailures++
+                recordError("auto-install dari assets tidak menghasilkan userland siap", null, report.take(300))
+            }
+        } catch (t: Throwable) {
+            autoInstallFailures++
+            recordError("auto-install dari assets gagal", t)
+        }
+    }
+
+    /**
+     * Seeds `/root/.gitconfig` with `safe.directory = *`: project folders are bind-mounted from
+     * Android storage, whose ownership never matches the proot user, so git would otherwise refuse
+     * with "dubious ownership".
+     */
+    fun ensureGitConfig(distro: String) {
+        val root = rootfsDir(distro)
+        if (!root.isDirectory) return
+        try {
+            val home = File(root, "root").apply { mkdirs() }
+            val cfg = File(home, ".gitconfig")
+            val current = if (cfg.isFile) cfg.readText() else ""
+            if (Regex("""directory\s*=\s*\*""").containsMatchIn(current)) return
+            val prefix = if (current.isNotEmpty() && !current.endsWith("\n")) "\n" else ""
+            cfg.appendText(prefix + "[safe]\n\tdirectory = *\n")
         } catch (_: Throwable) {
         }
     }
@@ -161,6 +217,7 @@ object LinuxSubsystem {
     fun buildProotCommand(distro: String, cwd: File?, guestArgs: List<String>): List<String> {
         ensureResolvConf(distro)
         ensureAptConfig(distro)
+        ensureGitConfig(distro)
         val root = rootfsDir(distro)
         val guestTmp = File(root, "tmp").apply { mkdirs() }
         val isAlpine = distro.equals("alpine", ignoreCase = true)
@@ -295,6 +352,7 @@ object LinuxSubsystem {
         sb.appendLine("Base dir     : ${baseDir().absolutePath}")
         sb.appendLine("proot        : ${if (isProotInstalled()) "TERPASANG" else "BELUM"}")
         sb.appendLine("loader       : ${if (loaderBinary().exists()) "ada" else "tidak ada (opsional)"}")
+        lastErrorMessage?.let { sb.appendLine("Error terakhir: $it") }
 
         val distros = installedDistros()
         if (distros.isEmpty()) {

@@ -20,9 +20,11 @@ import pro.sketchware.ai.observe.RuntimeLogHarness
 import pro.sketchware.ai.project.ProjectGateway
 import pro.sketchware.ai.provider.ToolDefinition
 import pro.sketchware.ai.provider.ToolParameterProperty
+import pro.sketchware.ai.shell.DangerousCommandGuard
 import pro.sketchware.ai.shell.LinuxDownloader
 import pro.sketchware.ai.shell.LinuxSubsystem
 import pro.sketchware.ai.shell.OutputSpiller
+import pro.sketchware.ai.shell.PromptDetector
 import pro.sketchware.ai.shell.ShellResult
 import pro.sketchware.ai.shell.ShellRunner
 import pro.sketchware.ai.shell.TerminalSessionManager
@@ -349,7 +351,8 @@ Working directory defaults to the active project's generated workspace under '.s
                 ToolParameterProperty("in_linux", "boolean", "Force running inside the Linux userland via proot. Omit to auto-select (userland if installed, else host shell).", required = false),
                 ToolParameterProperty("linux_distro", "string", "Which installed distro to use inside the userland (e.g. 'alpine', 'ubuntu'). Defaults to the configured default distro.", required = false),
                 ToolParameterProperty("pty", "boolean", "Run the command under a real PTY (via util-linux 'script') when available in the Linux distro, so tools that check isatty behave interactively. Requires in_linux=true.", required = false),
-                ToolParameterProperty("session_id", "string", "Optional persistent session id from terminal_start: run this command inside that existing session and return its incremental output (unifies one-shot and persistent execution).", required = false)
+                ToolParameterProperty("session_id", "string", "Optional persistent session id from terminal_start: run this command inside that existing session and return its incremental output (unifies one-shot and persistent execution).", required = false),
+                ToolParameterProperty("confirm_destructive", "boolean", "Set true ONLY when the user explicitly asked for a destructive command the safety guard blocked (e.g. recursive delete outside .sketchware, mkfs, dd to /dev). Never set it on your own initiative.", required = false)
             ),
             isWriteTool = true
         ),
@@ -404,7 +407,9 @@ Returns a session_id used by terminal_send / terminal_read / terminal_stop.""",
                 ToolParameterProperty("engine", "string", "Session engine: 'host', 'linux', or 'root'. Default 'host'.", required = false, enumValues = listOf("host", "linux", "root")),
                 ToolParameterProperty("distro", "string", "Distro for engine='linux' (e.g. 'ubuntu'). Defaults to the configured default.", required = false),
                 ToolParameterProperty("cwd", "string", "Working directory (absolute). Defaults to the project workspace.", required = false),
-                ToolParameterProperty("pty", "boolean", "Allocate a real PTY when supported (engine='linux' with util-linux 'script').", required = false)
+                ToolParameterProperty("pty", "boolean", "Allocate a real PTY when supported (engine='linux' with util-linux 'script').", required = false),
+                ToolParameterProperty("rows", "integer", "PTY rows (default 24). Native PTY sessions only.", required = false),
+                ToolParameterProperty("cols", "integer", "PTY columns (default 80). Use larger values (e.g. 200) to avoid wrapped output.", required = false)
             ),
             isWriteTool = true
         ),
@@ -414,7 +419,8 @@ Returns a session_id used by terminal_send / terminal_read / terminal_stop.""",
             parameters = listOf(
                 ToolParameterProperty("session_id", "string", "Session id from terminal_start.", required = true),
                 ToolParameterProperty("input", "string", "Text to send (e.g. 'apt-get update' or 'y' to answer a prompt).", required = true),
-                ToolParameterProperty("append_newline", "boolean", "Append '\\n' to input (default true). Set false to send raw keystrokes/control chars.", required = false)
+                ToolParameterProperty("append_newline", "boolean", "Append '\\n' to input (default true). Set false to send raw keystrokes/control chars.", required = false),
+                ToolParameterProperty("confirm_destructive", "boolean", "Set true ONLY when the user explicitly asked for a destructive command the safety guard blocked (e.g. recursive delete outside .sketchware, mkfs, dd to /dev). Never set it on your own initiative.", required = false)
             ),
             isWriteTool = true
         ),
@@ -423,15 +429,27 @@ Returns a session_id used by terminal_send / terminal_read / terminal_stop.""",
             description = "Read output produced by a terminal session since the previous read (incremental). Optionally wait a little for the command to produce output.",
             parameters = listOf(
                 ToolParameterProperty("session_id", "string", "Session id from terminal_start.", required = true),
-                ToolParameterProperty("wait_ms", "integer", "Wait this many ms before reading, to let the command run (default 400, max 20000).", required = false)
+                ToolParameterProperty("wait_ms", "integer", "Wait this many ms before reading, to let the command run (default 400, max 20000).", required = false),
+                ToolParameterProperty("wait_for_pattern", "string", "Regex. Block (up to wait_ms, default 10000 when set) until unread output matches it, e.g. '\\[Y/n\\]|\\$ $'. Lets you wait for a prompt without repeated polling.", required = false),
+                ToolParameterProperty("idle_ms", "integer", "Return once the session produced output and then stayed silent for this many ms (max 10000). Combine with wait_ms as the overall limit.", required = false)
             ),
             isWriteTool = false
         ),
         ToolDefinition(
             name = "terminal_stop",
-            description = "Terminate a persistent terminal session.",
+            description = "Terminate a persistent terminal session and its whole process tree (alias: terminal_kill).",
             parameters = listOf(
                 ToolParameterProperty("session_id", "string", "Session id from terminal_start.", required = true)
+            ),
+            isWriteTool = true
+        ),
+        ToolDefinition(
+            name = "terminal_resize",
+            description = "Resize the pseudo-terminal window of a native-PTY session (rows x cols), e.g. to 40x200 so long lines are not wrapped.",
+            parameters = listOf(
+                ToolParameterProperty("session_id", "string", "Session id from terminal_start.", required = true),
+                ToolParameterProperty("rows", "integer", "New number of rows (5-500).", required = true),
+                ToolParameterProperty("cols", "integer", "New number of columns (20-500).", required = true)
             ),
             isWriteTool = true
         ),
@@ -585,8 +603,16 @@ Actions:
      * Used as a defense-in-depth guard at execution time so read-only modes cannot run a
      * mutating tool even if a model emits a call for a tool it was not offered.
      */
-    fun isWriteTool(toolName: String): Boolean =
-        allTools.firstOrNull { it.name == toolName }?.isWriteTool ?: false
+    fun isWriteTool(toolName: String): Boolean {
+        val canonical = TOOL_ALIASES[toolName] ?: toolName
+        return allTools.firstOrNull { it.name == canonical }?.isWriteTool ?: false
+    }
+
+    /** Alternate tool names models commonly emit -> the canonical registered tool. */
+    private val TOOL_ALIASES: Map<String, String> = mapOf(
+        "terminal_kill" to "terminal_stop",
+        "terminal_close" to "terminal_stop"
+    )
 
     fun executeTool(
         context: Context,
@@ -596,7 +622,7 @@ Actions:
         onProgressUpdate: ((String) -> Unit)? = null
     ): String {
         return try {
-            when (toolName) {
+            when (TOOL_ALIASES[toolName] ?: toolName) {
                 "get_project_summary" -> ProjectGateway.getProjectSummary(scId)
 
                 "get_screen_state" -> {
@@ -893,6 +919,7 @@ Actions:
                     if (command.isBlank()) {
                         return "Error: parameter 'command' kosong."
                     }
+                    guardDestructive(command, args)?.let { return it }
                     val sessionId = args.str("session_id")
                     if (sessionId.isNotBlank()) {
                         val session = TerminalSessionManager.get(sessionId)
@@ -936,9 +963,11 @@ Actions:
                     val cwdArg = args.str("cwd")
                     val cwd = if (cwdArg.isNotBlank()) File(cwdArg) else defaultWorkspaceDir(scId)
                     val pty = args.bool("pty", false)
+                    val rows = args.long("rows", TerminalSessionManager.DEFAULT_ROWS.toLong()).toInt()
+                    val cols = args.long("cols", TerminalSessionManager.DEFAULT_COLS.toLong()).toInt()
                     onProgressUpdate?.invoke("terminal_start [$engine${distro?.let { ":$it" } ?: ""}]")
                     try {
-                        val session = TerminalSessionManager.start(context, engine, distro, cwd, pty)
+                        val session = TerminalSessionManager.start(context, engine, distro, cwd, pty, rows, cols)
                         "Session dimulai: ${session.id}\n${session.describe()}\n\nGunakan terminal_send(session_id=\"${session.id}\", input=\"...\") lalu terminal_read untuk mengambil output."
                     } catch (t: Throwable) {
                         "Error: gagal memulai terminal: ${t.javaClass.simpleName}: ${t.message}"
@@ -949,6 +978,7 @@ Actions:
                     val sessionId = args.str("session_id")
                     val input = args.str("input")
                     val appendNewline = args.bool("append_newline", true)
+                    guardDestructive(input, args)?.let { return it }
                     val session = TerminalSessionManager.get(sessionId)
                         ?: return "Error: session '$sessionId' tidak ditemukan. Pakai terminal_list untuk melihat sesi aktif."
                     session.write(if (appendNewline) input + "\n" else input)
@@ -959,18 +989,40 @@ Actions:
                     val sessionId = args.str("session_id")
                     val session = TerminalSessionManager.get(sessionId)
                         ?: return "Error: session '$sessionId' tidak ditemukan."
-                    val waitMs = args.long("wait_ms", 400L).coerceIn(0L, 20_000L)
-                    if (waitMs > 0) {
+                    val pattern = args.str("wait_for_pattern")
+                    val idleMs = args.long("idle_ms", 0L).coerceIn(0L, 10_000L)
+                    val waiting = pattern.isNotBlank() || idleMs > 0L
+                    val waitMs = args.long("wait_ms", if (waiting) 10_000L else 400L)
+                        .coerceIn(0L, if (waiting) 120_000L else 20_000L)
+                    val regex = if (pattern.isNotBlank()) {
                         try {
-                            Thread.sleep(waitMs)
-                        } catch (_: InterruptedException) {
+                            Regex(pattern)
+                        } catch (e: Exception) {
+                            return "Error: wait_for_pattern bukan regex yang valid: ${e.message}"
                         }
+                    } else {
+                        null
                     }
-                    val chunk = session.readNew()
+                    val chunk = if (waiting) {
+                        session.readUntil(regex, waitMs, idleMs)
+                    } else {
+                        if (waitMs > 0) {
+                            try {
+                                Thread.sleep(waitMs)
+                            } catch (_: InterruptedException) {
+                            }
+                        }
+                        session.readNew()
+                    }
+                    val promptHint = if (session.isAlive) PromptDetector.detect(chunk) else null
                     val out = buildString {
                         appendLine("=== terminal_read [$sessionId | ${session.engine} | alive=${session.isAlive} | exit=${session.exitCode ?: "-"}] ===")
                         if (chunk.isBlank()) appendLine("(tidak ada output baru; proses " + (if (session.isAlive) "masih berjalan" else "sudah selesai") + ")")
                         else append(chunk)
+                        if (promptHint != null) {
+                            appendLine()
+                            appendLine("[prompt] $promptHint")
+                        }
                     }.trim()
                     OutputSpiller.maybeSpill(scId, "terminal_read", out)
                 }
@@ -978,6 +1030,17 @@ Actions:
                 "terminal_stop" -> {
                     val sessionId = args.str("session_id")
                     if (TerminalSessionManager.stop(sessionId)) "Session '$sessionId' dihentikan." else "Error: session '$sessionId' tidak ditemukan."
+                }
+
+                "terminal_resize" -> {
+                    val sessionId = args.str("session_id")
+                    val session = TerminalSessionManager.get(sessionId)
+                        ?: return "Error: session '$sessionId' tidak ditemukan."
+                    val rows = args.long("rows", 0L).toInt()
+                    val cols = args.long("cols", 0L).toInt()
+                    if (rows <= 0 || cols <= 0) return "Error: 'rows' dan 'cols' wajib diisi (angka positif)."
+                    if (session.resize(rows, cols)) "Ukuran PTY '$sessionId' diubah menjadi ${rows}x$cols."
+                    else "Error: sesi '$sessionId' bukan sesi native-PTY, sehingga tidak bisa di-resize."
                 }
 
                 "terminal_list" -> {
@@ -1429,6 +1492,20 @@ Analyze the provided project context and answer the Lead Agent's task concisely 
         } catch (t: Throwable) {
             "Tool Execution Error ($toolName): ${t.javaClass.simpleName}: ${t.message}"
         }
+    }
+
+    /**
+     * Returns an error string when [command] matches a clearly destructive pattern and the caller
+     * did not pass `confirm_destructive=true`; null when the command may proceed.
+     */
+    private fun guardDestructive(command: String, args: JsonObject): String? {
+        if (args.bool("confirm_destructive", false)) return null
+        val verdict = DangerousCommandGuard.inspect(command)
+        if (!verdict.blocked) return null
+        return "Error: perintah DIBLOKIR oleh guard keamanan (${verdict.reason}). " +
+            "Perintah ini dapat menghapus data pengguna di luar workspace proyek (.sketchware) atau merusak sistem. " +
+            "Jika target sebenarnya ada di dalam folder proyek, ubah path-nya. " +
+            "Hanya jika pengguna secara eksplisit memintanya, ulangi dengan confirm_destructive=true."
     }
 
     private fun JsonObject.str(key: String): String {

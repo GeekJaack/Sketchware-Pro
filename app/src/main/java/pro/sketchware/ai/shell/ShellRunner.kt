@@ -25,7 +25,9 @@ object ShellRunner {
 
     private const val DEFAULT_TIMEOUT_MS = 120_000L
     private const val HARD_TIMEOUT_MS = 900_000L
+    private val APT_USAGE = Regex("""(^|[\s;&|(])apt(-get)?\s""")
 
+    /** Runs [command] and returns its result with ANSI escapes / control characters removed. */
     fun run(
         command: String,
         cwd: File?,
@@ -34,6 +36,19 @@ object ShellRunner {
         inLinux: Boolean,
         distro: String?,
         pty: Boolean = false
+    ): ShellResult {
+        val raw = runRaw(command, cwd, timeoutMs, useRoot, inLinux, distro, pty)
+        return raw.copy(stdout = AnsiStripper.strip(raw.stdout), stderr = AnsiStripper.strip(raw.stderr))
+    }
+
+    private fun runRaw(
+        command: String,
+        cwd: File?,
+        timeoutMs: Long,
+        useRoot: Boolean,
+        inLinux: Boolean,
+        distro: String?,
+        pty: Boolean
     ): ShellResult {
         val start = System.currentTimeMillis()
         if (inLinux) {
@@ -44,11 +59,26 @@ object ShellRunner {
                 if (ctx != null && requested.lowercase() in setOf("debian", "ubuntu", "alpine")) {
                     try {
                         LinuxDownloader.bootstrapToolchain(ctx, requested.lowercase()) { }
-                    } catch (_: Throwable) {
+                    } catch (t: Throwable) {
+                        LinuxSubsystem.recordError("bootstrap distro '$requested' gagal", t)
                     }
                 }
             }
-            val resolved = requested ?: LinuxSubsystem.defaultDistro()
+            var resolved = requested ?: LinuxSubsystem.defaultDistro()
+            var note = ""
+            if (requested != null && !LinuxSubsystem.isReady(requested)) {
+                val fallback = LinuxSubsystem.defaultDistro()
+                if (fallback != null && !fallback.equals(requested, ignoreCase = true) && LinuxSubsystem.isReady(fallback)) {
+                    note = "[fallback] distro '$requested' belum tersedia" +
+                        (LinuxSubsystem.lastError()?.let { " ($it)" } ?: " (unduhan gagal atau perangkat offline)") +
+                        "; perintah dijalankan di '$fallback'. Gunakan 'apk' untuk alpine, 'apt-get' untuk debian/ubuntu.\n"
+                    resolved = fallback
+                }
+            }
+            if (resolved != null && resolved.equals("alpine", ignoreCase = true) && APT_USAGE.containsMatchIn(command)) {
+                note += "[hint] distro aktif 'alpine' tidak punya apt; pakai 'apk add <paket>' atau pasang Debian via " +
+                    "manage_linux_env(action=\"bootstrap_debian\") saat online.\n"
+            }
             if (resolved == null || !LinuxSubsystem.isReady(resolved)) {
                 val installed = LinuxSubsystem.installedDistros()
                 return ShellResult(
@@ -63,7 +93,8 @@ object ShellRunner {
                     engine = "linux-unavailable"
                 )
             }
-            return runLinux(command, cwd, timeoutMs, useRoot, start, resolved, pty)
+            val result = runLinux(command, cwd, timeoutMs, useRoot, start, resolved, pty)
+            return if (note.isEmpty()) result else result.copy(stdout = note + result.stdout)
         }
         return if (useRoot) runRoot(command, start) else runHost(command, cwd, timeoutMs, start)
     }
@@ -145,7 +176,8 @@ object ShellRunner {
         waiter.join(timeoutMs)
         val timedOut = waiter.isAlive
         if (timedOut) {
-            try { android.os.Process.sendSignal(pidOut[0], 9) } catch (_: Throwable) {}
+            // Terminate the whole process group so proot tracees, apt, npm... do not linger as orphans.
+            Pty.terminateTree(pidOut[0])
         }
         waiter.join(2_000)
         reading.join(1_000)

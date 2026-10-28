@@ -45,8 +45,8 @@ object LinuxDownloader {
             }
             if (!LinuxSubsystem.isProotInstalled()) {
                 val proot = resolveProot(tag)
-                    ?: return "Error: tidak menemukan biner proot static untuk arsitektur '$tag'. " +
-                        "Untuk 32-bit x86 (x86) belum tersedia dari proot-me."
+                    ?: return ("Error: tidak menemukan biner proot static untuk arsitektur '$tag'. " +
+                        "Untuk 32-bit x86 (x86) belum tersedia dari proot-me.").also { LinuxSubsystem.recordError(it, null) }
                 onProgress("Mengunduh proot ($tag)…")
                 val prootFile = File(LinuxSubsystem.tmpDir(), proot.first.substringAfterLast('/'))
                 httpDownload(proot.first, prootFile)
@@ -62,7 +62,7 @@ object LinuxDownloader {
                 sb.appendLine("rootfs '$distro' sudah tersedia.")
             } else {
                 val rootfs = resolveRootfs(distro, tag)
-                    ?: return "Error: tidak menemukan rootfs '$distro' untuk arsitektur '$tag'."
+                    ?: return "Error: tidak menemukan rootfs '$distro' untuk arsitektur '$tag'.".also { LinuxSubsystem.recordError(it, null) }
 
                 onProgress("Mengunduh rootfs $distro ($tag)…")
                 val rootfsFile = File(LinuxSubsystem.tmpDir(), rootfs.first.substringAfterLast('/'))
@@ -73,8 +73,10 @@ object LinuxDownloader {
                 rootfsFile.delete()
             }
         } catch (t: Throwable) {
+            LinuxSubsystem.recordError("unduh/instal '$distro' gagal", t)
             return "Error: unduhan gagal: ${t.javaClass.simpleName}: ${t.message}"
         }
+        LinuxSubsystem.clearError()
         sb.appendLine()
         sb.appendLine(LinuxSubsystem.statusReport())
         return sb.toString().trim()
@@ -102,6 +104,7 @@ object LinuxDownloader {
         LinuxSubsystem.setDefaultDistro(target)
         LinuxSubsystem.ensureResolvConf(target)
         LinuxSubsystem.ensureAptConfig(target)
+        LinuxSubsystem.ensureGitConfig(target)
 
         onProgress("Memasang paket dasar ($target: curl, wget, git, python3, pip)…")
         val installCmd = if (target == "alpine") {

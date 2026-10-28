@@ -368,7 +368,7 @@ object SkillManager {
             ) to """
                 # Patent Skill: Full Terminal & Debian Linux Workspace Commander
 
-                Anda memegang kendali penuh atas terminal di AI Agent Studio (`run_shell`, `terminal_start`, `terminal_send`, `terminal_read`, `terminal_list`, `terminal_kill`, `manage_linux_env`, serta MCP `debian_toolkit`).
+                Anda memegang kendali penuh atas terminal di AI Agent Studio (`run_shell`, `terminal_start`, `terminal_send`, `terminal_read`, `terminal_list`, `terminal_stop`, `terminal_resize`, `manage_linux_env`, serta MCP `debian_toolkit`).
 
                 ## 1. Peta Direktori Penting di Terminal
                 - **Data Proyek Aktif (`@project/`)**: `/storage/emulated/0/.sketchware/data/<sc_id>/`
@@ -379,6 +379,15 @@ object SkillManager {
                   - `ai_artifacts/` : Deliverable di panel **📦 Artifacts**
                 - **Output Build & Source Proyek (`@mysc/`)**: `/storage/emulated/0/.sketchware/mysc/<sc_id>/`
                 - **Local Libraries (`@libs/`)**: `/storage/emulated/0/.sketchware/libs/local_libs/`
+
+                ## 1b. Cheat Sheet Jalur Fitur Sketchware (`@project/` = `.sketchware/data/<sc_id>/`)
+                - `@project/Injection/androidmanifest/` : `attributes.json`, `activity_launcher.txt`, `activities_components.json`, `app_components.txt` (manifest injection)
+                - `@project/permission`, `@project/java`, `@project/service`, `@project/broadcast` : daftar JSON permission, Activity, Service, dan BroadcastReceiver yang terdaftar di manifest
+                - `@project/files/java/`, `@project/files/service/`, `@project/files/broadcast/` : sumber Java/Kotlin
+                - `@project/files/native_libs/<abi>/` : file `.so`; `@project/files/kt_plugins/` : plugin Kotlin compiler
+                - `@project/files/resource/values*/` : `strings.xml`, `colors.xml`, `styles.xml`, `themes.xml`
+                - `@project/proguard-rules.pro` : aturan ProGuard/R8
+                - Pakai tool khusus (`manage_manifest`, `manage_permissions`, `manage_res_values`, `manage_java_files`) bila tersedia; menulis berkas mentah hanya jika tidak ada tool yang sesuai.
 
                 ## 2. Kapan & Bagaimana Menguasai Terminal Secara Leluasa
                 - **Otomasi Skrip Python 3 (`python3 -c "..."` atau `mcp__debian_toolkit__python_eval`)**:

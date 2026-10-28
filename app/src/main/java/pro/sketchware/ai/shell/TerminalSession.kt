@@ -47,8 +47,9 @@ class TerminalSession internal constructor(
         synchronized(buffer) {
             buffer.append(text)
             if (buffer.length > MAX_BUFFER) {
-                buffer.delete(0, buffer.length - MAX_BUFFER)
-                if (cursor > buffer.length) cursor = 0
+                val dropped = buffer.length - MAX_BUFFER
+                buffer.delete(0, dropped)
+                cursor = (cursor - dropped).coerceAtLeast(0)
             }
         }
         lastActivity = System.currentTimeMillis()
@@ -63,13 +64,60 @@ class TerminalSession internal constructor(
         }
     }
 
-    /** Returns output produced since the previous call (using an internal cursor). */
+    /**
+     * Returns output produced since the previous call (using an internal cursor), with ANSI escapes
+     * and control characters removed. A trailing, still-incomplete escape sequence is held back
+     * until the rest arrives (or the session ends).
+     */
     fun readNew(): String {
         synchronized(buffer) {
             if (cursor > buffer.length) cursor = 0
-            val out = buffer.substring(cursor)
-            cursor = buffer.length
-            return out
+            var end = buffer.length
+            if (isAlive) {
+                end = cursor + AnsiStripper.incompleteTailStart(buffer.substring(cursor, end))
+            }
+            val out = buffer.substring(cursor, end)
+            cursor = end
+            return AnsiStripper.strip(out)
+        }
+    }
+
+    /** Cleaned, not-yet-read output without advancing the read cursor. */
+    fun peekNew(): String = synchronized(buffer) {
+        if (cursor > buffer.length) cursor = 0
+        AnsiStripper.strip(buffer.substring(cursor))
+    }
+
+    /**
+     * Blocks until [pattern] matches the unread output, the output has been idle for [idleMs]
+     * (when > 0), the process exits, or [maxWaitMs] elapses; then returns [readNew].
+     */
+    fun readUntil(pattern: Regex?, maxWaitMs: Long, idleMs: Long): String {
+        val deadline = System.currentTimeMillis() + maxWaitMs.coerceAtLeast(0L)
+        while (true) {
+            if (!isAlive) break
+            val now = System.currentTimeMillis()
+            val pending = peekNew()
+            if (pattern != null && pending.isNotEmpty() && pattern.containsMatchIn(pending)) break
+            if (idleMs > 0 && pending.isNotEmpty() && now - lastActivity >= idleMs) break
+            if (now >= deadline) break
+            try {
+                Thread.sleep(50)
+            } catch (_: InterruptedException) {
+                break
+            }
+        }
+        return readNew()
+    }
+
+    /** Resizes the PTY window (native PTY sessions only). Returns true when applied. */
+    fun resize(rows: Int, cols: Int): Boolean {
+        val pfd = masterPfd ?: return false
+        return try {
+            Pty.setWindowSize(pfd.fd, rows.coerceIn(5, 500), cols.coerceIn(20, 500))
+            true
+        } catch (_: Throwable) {
+            false
         }
     }
 
@@ -83,6 +131,14 @@ class TerminalSession internal constructor(
     fun close() {
         closed = true
         if (masterPfd != null) {
+            val pid = childPid
+            if (pid > 1) {
+                Thread { Pty.terminateTree(pid) }.apply {
+                    isDaemon = true
+                    name = "TerminalKill-$id"
+                    start()
+                }
+            }
             try {
                 masterPfd.close()
             } catch (_: Throwable) {
@@ -111,8 +167,8 @@ class TerminalSession internal constructor(
 
 object TerminalSessionManager {
 
-    private const val DEFAULT_ROWS = 24
-    private const val DEFAULT_COLS = 80
+    const val DEFAULT_ROWS = 24
+    const val DEFAULT_COLS = 80
 
     private val sessions = ConcurrentHashMap<String, TerminalSession>()
 
@@ -142,7 +198,9 @@ object TerminalSessionManager {
         engine: String,
         distro: String?,
         cwd: File?,
-        pty: Boolean
+        pty: Boolean,
+        rows: Int = DEFAULT_ROWS,
+        cols: Int = DEFAULT_COLS
     ): TerminalSession {
         val workDir = cwd?.takeIf { it.isDirectory } ?: LinuxSubsystem.baseDir()
 
@@ -168,7 +226,7 @@ object TerminalSessionManager {
         if (pty && Pty.isAvailable) {
             val commandLine = buildCommandLine(engineKind, resolvedDistro, workDir)
             try {
-                return startNativePty(commandLine, workDir, "$baseLabel:pty")
+                return startNativePty(commandLine, workDir, "$baseLabel:pty", rows.coerceIn(5, 500), cols.coerceIn(20, 500))
             } catch (_: Throwable) {
                 // fall through to pipe/script path
             }
@@ -189,9 +247,9 @@ object TerminalSessionManager {
         }
     }
 
-    private fun startNativePty(commandLine: String, workDir: File, engineLabel: String): TerminalSession {
+    private fun startNativePty(commandLine: String, workDir: File, engineLabel: String, rows: Int, cols: Int): TerminalSession {
         val pidOut = IntArray(1)
-        val fd = Pty.createSubprocess(commandLine, workDir.absolutePath, pidOut, DEFAULT_ROWS, DEFAULT_COLS)
+        val fd = Pty.createSubprocess(commandLine, workDir.absolutePath, pidOut, rows, cols)
         if (fd < 0 || pidOut[0] <= 0) {
             throw IllegalStateException("native pty gagal (fd=$fd pid=${pidOut[0]})")
         }

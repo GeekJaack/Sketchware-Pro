@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -128,4 +129,17 @@ Java_pro_sketchware_ai_shell_Pty_waitFor(JNIEnv *env, jobject thiz, jint pid) {
 JNIEXPORT void JNICALL
 Java_pro_sketchware_ai_shell_Pty_closeFd(JNIEnv *env, jobject thiz, jint fd) {
     if (fd >= 0) close(fd);
+}
+
+/*
+ * Sends [sig] to the whole process group led by [pid]. The PTY child calls setsid(), so its pid
+ * is also its process-group id; this reaches grandchildren (proot tracees, apt, npm, python...)
+ * that a plain kill(pid) would leave orphaned. Falls back to kill(pid) when killpg fails.
+ */
+JNIEXPORT jint JNICALL
+Java_pro_sketchware_ai_shell_Pty_killProcessGroup(JNIEnv *env, jobject thiz, jint pid, jint sig) {
+    if (pid <= 1) return -1;
+    int r = killpg((pid_t) pid, sig);
+    if (r != 0) r = kill((pid_t) pid, sig);
+    return r;
 }
