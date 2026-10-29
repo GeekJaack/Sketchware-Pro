@@ -8,6 +8,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -363,18 +364,43 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
         )
     }
 
-    private fun callOpenAiCompatible(
+    /**
+     * OpenAI reasoning-era models (gpt-5*, o1/o3/o4*) only accept the default temperature and answer
+     * HTTP 400 "Unsupported value: 'temperature'" otherwise. Also matches OpenRouter ids ("openai/gpt-5").
+     */
+    internal fun modelRejectsTemperature(modelId: String): Boolean {
+        val m = modelId.trim().substringAfterLast('/').lowercase()
+        return m.startsWith("gpt-5") || m.startsWith("o1") || m.startsWith("o3") || m.startsWith("o4")
+    }
+
+    internal fun isTemperatureRejection(code: Int, detail: String): Boolean =
+        (code == 400 || code == 422) && detail.contains("temperature", ignoreCase = true)
+
+    /**
+     * A bare host ("https://api.openai.com") is the most common mistake: the endpoint would become
+     * /chat/completions instead of /v1/chat/completions and answer 404. Add the missing version prefix.
+     */
+    internal fun normalizeOpenAiBaseUrl(raw: String): String {
+        val url = raw.trim().trimEnd('/')
+        if (url.endsWith("/chat/completions")) return url
+        val parsed = url.toHttpUrlOrNull() ?: return url
+        if (parsed.encodedPath != "/") return url
+        return if (parsed.host.endsWith("openrouter.ai")) "$url/api/v1" else "$url/v1"
+    }
+
+    internal fun callOpenAiCompatible(
         baseUrl: String,
         apiKey: String,
         modelId: String,
         systemPrompt: String,
         messages: List<LlmTurnMessage>,
         tools: List<ToolDefinition>,
-        allowPromptToolFallback: Boolean = true
+        allowPromptToolFallback: Boolean = true,
+        sendTemperature: Boolean = !modelRejectsTemperature(modelId)
     ): LlmResponse {
         val root = JsonObject()
         root.addProperty("model", modelId)
-        root.addProperty("temperature", 0.2)
+        if (sendTemperature) root.addProperty("temperature", 0.2)
         root.addProperty("stream", false)
 
         val msgArray = JsonArray()
@@ -444,7 +470,8 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
             root.addProperty("tool_choice", "auto")
         }
 
-        val endpoint = if (baseUrl.endsWith("/chat/completions")) baseUrl else "$baseUrl/chat/completions"
+        val normalizedBase = normalizeOpenAiBaseUrl(baseUrl)
+        val endpoint = if (normalizedBase.endsWith("/chat/completions")) normalizedBase else "$normalizedBase/chat/completions"
         val reqBuilder = Request.Builder()
             .url(endpoint)
             .post(gson.toJson(root).toRequestBody(jsonMediaType))
@@ -463,6 +490,13 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
             val bodyStr = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 val detail = extractErrorDetail(bodyStr)
+                // Model only supports the default temperature: retry once without the parameter.
+                if (sendTemperature && isTemperatureRejection(response.code, detail)) {
+                    return callOpenAiCompatible(
+                        baseUrl, apiKey, modelId, systemPrompt, messages, tools,
+                        allowPromptToolFallback = allowPromptToolFallback, sendTemperature = false
+                    )
+                }
                 // If a custom/free model gateway rejects the 'tools' schema (HTTP 400/422), retry using inline <tool_call> prompt mode
                 if (allowPromptToolFallback && tools.isNotEmpty() && (response.code == 400 || response.code == 422) &&
                     (detail.contains("tool", ignoreCase = true) || detail.contains("function", ignoreCase = true) || detail.contains("schema", ignoreCase = true))
@@ -483,9 +517,13 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
                             else -> m
                         }
                     }
-                    return callOpenAiCompatible(baseUrl, apiKey, modelId, fallbackSys, fallbackMsgs, emptyList(), allowPromptToolFallback = false)
+                    return callOpenAiCompatible(
+                        baseUrl, apiKey, modelId, fallbackSys, fallbackMsgs, emptyList(),
+                        allowPromptToolFallback = false, sendTemperature = sendTemperature
+                    )
                 }
-                val msg = "API Error (${response.code}): $detail"
+                val where = if (response.code == 404) " [endpoint: $endpoint — periksa Base URL; biasanya harus berakhiran /v1]" else ""
+                val msg = "API Error (${response.code}): $detail$where"
                 if (isTransientHttpStatus(response.code)) {
                     throw TransientLlmException(msg, response.code)
                 }
