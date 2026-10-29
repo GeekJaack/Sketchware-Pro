@@ -84,9 +84,9 @@ class OpenAiCompatibleRequestTest {
     }
 
     @Test
-    fun `a bare host gets the v1 prefix and the bearer token is sent`() {
+    fun `a bare custom host is left as typed and the bearer token is sent`() {
         assertEquals("ok", call("gpt-4.1", baseUrl = base()).text)
-        assertEquals("/v1/chat/completions", requests.single().path)
+        assertEquals("/chat/completions", requests.single().path)
         assertEquals("Bearer sk-test", requests.single().auth)
     }
 
@@ -132,7 +132,8 @@ class OpenAiCompatibleRequestTest {
         assertEquals("https://api.openai.com/v1", c.normalizeOpenAiBaseUrl("https://api.openai.com"))
         assertEquals("https://api.openai.com/v1", c.normalizeOpenAiBaseUrl("https://api.openai.com/v1/"))
         assertEquals("https://openrouter.ai/api/v1", c.normalizeOpenAiBaseUrl("https://openrouter.ai"))
-        assertEquals("http://localhost:11434/v1", c.normalizeOpenAiBaseUrl("http://localhost:11434"))
+        assertEquals("https://x.com", c.normalizeOpenAiBaseUrl("https://x.com"))
+        assertEquals("http://localhost:11434", c.normalizeOpenAiBaseUrl("http://localhost:11434"))
         assertEquals("https://x.com/v1/chat/completions", c.normalizeOpenAiBaseUrl("https://x.com/v1/chat/completions"))
         assertEquals("not a url", c.normalizeOpenAiBaseUrl("not a url"))
     }

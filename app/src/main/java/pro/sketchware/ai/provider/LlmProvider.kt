@@ -377,15 +377,20 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
         (code == 400 || code == 422) && detail.contains("temperature", ignoreCase = true)
 
     /**
-     * A bare host ("https://api.openai.com") is the most common mistake: the endpoint would become
-     * /chat/completions instead of /v1/chat/completions and answer 404. Add the missing version prefix.
+     * Users often enter only the host (https://api.openai.com), which lands on /chat/completions
+     * without /v1 and answers 404. The default path is added only for hosts whose layout is known;
+     * any other (self-hosted/custom) URL is left exactly as typed because its layout is unknowable.
      */
     internal fun normalizeOpenAiBaseUrl(raw: String): String {
         val url = raw.trim().trimEnd('/')
         if (url.endsWith("/chat/completions")) return url
         val parsed = url.toHttpUrlOrNull() ?: return url
         if (parsed.encodedPath != "/") return url
-        return if (parsed.host.endsWith("openrouter.ai")) "$url/api/v1" else "$url/v1"
+        return when {
+            parsed.host == "api.openai.com" -> "$url/v1"
+            parsed.host == "openrouter.ai" || parsed.host.endsWith(".openrouter.ai") -> "$url/api/v1"
+            else -> url
+        }
     }
 
     internal fun callOpenAiCompatible(
@@ -522,7 +527,11 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
                         allowPromptToolFallback = false, sendTemperature = sendTemperature
                     )
                 }
-                val where = if (response.code == 404) " [endpoint: $endpoint — periksa Base URL; biasanya harus berakhiran /v1]" else ""
+                val where = when (response.code) {
+                    401 -> " [API Key ditolak/salah]"
+                    404 -> " [endpoint: $endpoint — periksa Base URL dan nama model; biasanya Base URL berakhiran /v1]"
+                    else -> ""
+                }
                 val msg = "API Error (${response.code}): $detail$where"
                 if (isTransientHttpStatus(response.code)) {
                     throw TransientLlmException(msg, response.code)
