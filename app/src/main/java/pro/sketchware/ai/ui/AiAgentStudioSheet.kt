@@ -138,10 +138,10 @@ object AiAgentStudioSheet {
             .setTitle("Bangun Aplikasi dari 0 dengan AI Agent")
             .setIcon(R.drawable.ic_mtrl_code)
             .setView(scroll)
-            .setNeutralButton("API & MCP") { _, _ ->
-                AiSettingsDialog.show(activity) {
+            .setNeutralButton("API Key & Model") { _, _ ->
+                ModelSettingsPage(activity, onClosed = {
                     showCreateAppFromZeroDialog(activity, onProjectCreated)
-                }
+                }).show()
             }
             .setNegativeButton("Batal", null)
             .setPositiveButton("Buat & Jalankan Agent") { d, _ ->

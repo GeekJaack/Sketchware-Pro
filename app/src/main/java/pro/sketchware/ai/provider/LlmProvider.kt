@@ -117,16 +117,7 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
             }
 
             try {
-                val useOpenAiCompatForGeminiTab = provider == AiProviderType.GEMINI &&
-                    !baseUrl.contains("googleapis.com", ignoreCase = true) &&
-                    !modelId.startsWith("gemini", ignoreCase = true)
-
-                return when {
-                    useOpenAiCompatForGeminiTab -> callOpenAiCompatible(baseUrl, apiKey, modelId, systemPrompt, effectiveMessages, tools)
-                    provider == AiProviderType.GEMINI -> callGemini(baseUrl, apiKey, modelId, systemPrompt, effectiveMessages, tools)
-                    provider == AiProviderType.CLAUDE -> callClaude(baseUrl, apiKey, modelId, systemPrompt, effectiveMessages, tools)
-                    else -> callOpenAiCompatible(baseUrl, apiKey, modelId, systemPrompt, effectiveMessages, tools)
-                }
+                return callProvider(provider, baseUrl, apiKey, modelId, systemPrompt, effectiveMessages, tools)
             } catch (e: IOException) {
                 lastError = e
                 val isRetryable = isTransientError(e)
@@ -160,6 +151,47 @@ class LlmClient(private val configManager: AiConfigManager? = null) {
         }
 
         throw lastError ?: IOException("Gagal menghubungi layanan AI setelah $maxAttempts percobaan.")
+    }
+
+    /** Routes one request to the right wire protocol for [provider]. */
+    @Throws(IOException::class)
+    internal fun callProvider(
+        provider: AiProviderType,
+        baseUrl: String,
+        apiKey: String,
+        modelId: String,
+        systemPrompt: String,
+        messages: List<LlmTurnMessage>,
+        tools: List<ToolDefinition>
+    ): LlmResponse {
+        val useOpenAiCompatForGeminiTab = provider == AiProviderType.GEMINI &&
+            !baseUrl.contains("googleapis.com", ignoreCase = true) &&
+            !modelId.startsWith("gemini", ignoreCase = true)
+
+        return when {
+            useOpenAiCompatForGeminiTab -> callOpenAiCompatible(baseUrl, apiKey, modelId, systemPrompt, messages, tools)
+            provider == AiProviderType.GEMINI -> callGemini(baseUrl, apiKey, modelId, systemPrompt, messages, tools)
+            provider == AiProviderType.CLAUDE -> callClaude(baseUrl, apiKey, modelId, systemPrompt, messages, tools)
+            else -> callOpenAiCompatible(baseUrl, apiKey, modelId, systemPrompt, messages, tools)
+        }
+    }
+
+    /**
+     * One-shot credentials/connectivity check for the settings UI: sends a tiny prompt with the
+     * given (possibly unsaved) values and returns the reply, or throws the same IOException the agent would see.
+     */
+    @Throws(IOException::class)
+    fun ping(provider: AiProviderType, apiKey: String, baseUrl: String, modelId: String): LlmResponse {
+        val key = apiKey.trim()
+        if (key.isEmpty() && provider != AiProviderType.CUSTOM) throw IOException("API Key kosong.")
+        val model = modelId.trim().ifEmpty { provider.defaultModel }
+        val url = baseUrl.trim().ifEmpty { provider.defaultBaseUrl }.trimEnd('/')
+        return callProvider(
+            provider, url, key, model,
+            "You are a connectivity check. Reply with one short word.",
+            listOf(LlmTurnMessage(role = "user", content = "Reply with the single word: ok")),
+            emptyList()
+        )
     }
 
     private fun isTransientError(e: IOException): Boolean {

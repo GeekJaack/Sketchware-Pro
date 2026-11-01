@@ -447,7 +447,7 @@ class AgentChatScreen(
             setPadding(dp(10), dp(4), dp(10), dp(4))
             background = ripple(rounded(Color.TRANSPARENT, 10f, cOutline))
             isClickable = true
-            setOnClickListener { AiSettingsDialog.show(activity) { refreshHeader() } }
+            setOnClickListener { openModelSettings() }
         })
         return row
     }
@@ -508,9 +508,9 @@ class AgentChatScreen(
         nav.addView(sidebarItem(R.drawable.ic_mtrl_tune, tx.agentModes, trailing = "${modeTitle(config.autonomyMode)} · ${DeerFlowTheme.modeTag(config.autonomyMode)}") {
             closeSidebar(); showModePicker()
         })
-        nav.addView(sidebarItem(R.drawable.ic_mtrl_star, tx.skills) { closeSidebar(); openExtensions(2) })
-        nav.addView(sidebarItem(R.drawable.ic_mtrl_puzzle, tx.plugins) { closeSidebar(); openExtensions(1) })
-        nav.addView(sidebarItem(R.drawable.ic_mtrl_link, tx.mcp) { closeSidebar(); openExtensions(0) })
+        nav.addView(sidebarItem(R.drawable.ic_mtrl_star, tx.skills) { closeSidebar(); openSkills() })
+        nav.addView(sidebarItem(R.drawable.ic_mtrl_puzzle, tx.plugins) { closeSidebar(); openPlugins() })
+        nav.addView(sidebarItem(R.drawable.ic_mtrl_link, tx.mcp) { closeSidebar(); openMcp() })
         nav.addView(sidebarItem(R.drawable.ic_mtrl_terminal, tx.terminal) { closeSidebar(); TerminalScreen.show(activity, scId) })
         nav.addView(sidebarItem(R.drawable.ic_mtrl_history, tx.checkpoints) { closeSidebar(); showCheckpointsDialog() })
 
@@ -643,16 +643,27 @@ class AgentChatScreen(
             .withEndAction { sidebarPanel.visibility = View.GONE }.start()
     }
 
-    private fun openExtensions(tab: Int) {
-        ExtensionsHubDialog.show(
-            context = activity,
-            initialTab = tab,
-            onUsePrompt = { promptText ->
+    private fun openSkills() {
+        SkillsPage(
+            activity,
+            onUseInChat = { promptText ->
                 prefill(promptText)
                 focusComposer()
             },
-            onChanged = { refreshHeader() }
-        )
+            onClosed = { refreshHeader() }
+        ).show()
+    }
+
+    private fun openPlugins() {
+        PluginsPage(activity) { refreshHeader() }.show()
+    }
+
+    private fun openMcp() {
+        McpPage(activity) { refreshHeader() }.show()
+    }
+
+    private fun openModelSettings() {
+        ModelSettingsPage(activity, onChanged = { refreshHeader() }, onClosed = { refreshHeader() }).show()
     }
 
     private fun showArtifactsSheet() {
@@ -1350,9 +1361,7 @@ class AgentChatScreen(
         actions.addView(btnAddContext, lp(dp(32), dp(32)).apply { rightMargin = dp(6) })
 
         tvModePill = ghostPill(R.drawable.ic_mtrl_sprint) { showModePicker() }
-        tvModelPill = ghostPill(R.drawable.ic_mtrl_bulb) {
-            AiSettingsDialog.show(activity) { refreshHeader() }
-        }
+        tvModelPill = ghostPill(R.drawable.ic_mtrl_bulb) { openModelSettings() }
         val pills = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -2181,7 +2190,7 @@ class AgentChatScreen(
                     8 -> showArtifactsSheet()
                     1 -> AiSettingsDialog.show(activity) { refreshHeader() }
                     7 -> pro.sketchware.ai.config.AiStrings.showLanguagePickerDialog(activity) { rebuildSidebar(); refreshHeader() }
-                    5 -> openExtensions(0)
+                    5 -> openMcp()
                     4 -> TerminalScreen.show(activity, scId)
                     6 -> showCheckpointsDialog()
                     2 -> copy(exportTranscript(), ui.copiedToast)
