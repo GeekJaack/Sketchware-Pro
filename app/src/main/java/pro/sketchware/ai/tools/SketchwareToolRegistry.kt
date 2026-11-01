@@ -598,11 +598,23 @@ Actions:
             isWriteTool = false
         ),
         ToolDefinition(
-            name = "call_mcp_tool",
-            description = "Invoke any tool exposed by a connected external MCP server (HTTP or Linux Stdio).",
+            name = "search_mcp_tools",
+            description = """Search and discover available MCP tools across the 205-tool REA (Reverse Engineer Anything) catalog (38 categories, Non-ADB) and all connected external MCP servers by keyword, category, or server_id.
+Always call this tool when working on APK analysis, binary/DEX inspection, decompilation, resource/manifest decoding, Flutter/React Native inspection, SQLite/crypto/hashing, or project reconstruction to find the exact REA/MCP tool name and its required parameters before invoking it via 'mcp__rea_mcp__<tool_name>' or 'call_mcp_tool'.""",
             parameters = listOf(
-                ToolParameterProperty("server_id", "string", "MCP connector ID (e.g. 'debian_toolkit', 'context7').", required = true),
-                ToolParameterProperty("tool_name", "string", "Name of the tool on that MCP server (e.g. 'python_eval', 'sqlite_inspect').", required = true),
+                ToolParameterProperty("query", "string", "Search keyword (e.g. 'apk', 'dex', 'manifest', 'apktool', 'jadx', 'strings', 'sqlite', 'flutter', 'frida', 'elf', 'crypto', 'reconstruct'). Leave blank to list categories and sample tools.", required = false),
+                ToolParameterProperty("category", "string", "Optional REA category filter (e.g. 'Android Tools', 'Android APK', 'APKTool', 'Decompilation', 'Binary Analysis', 'Strings and Data Types', 'SQLite', 'Flutter', 'Frida Instrumentation', 'Reconstruction').", required = false),
+                ToolParameterProperty("server_id", "string", "Optional MCP connector ID filter (e.g. 'rea_mcp', 'debian_toolkit', 'context7').", required = false),
+                ToolParameterProperty("max_results", "integer", "Maximum number of matching tools to return with full parameter schemas (default 25, max 60).", required = false)
+            ),
+            isWriteTool = false
+        ),
+        ToolDefinition(
+            name = "call_mcp_tool",
+            description = "Invoke any tool exposed by the 205-tool REA catalog ('rea_mcp') or any connected external MCP server (HTTP or Linux Stdio).",
+            parameters = listOf(
+                ToolParameterProperty("server_id", "string", "MCP connector ID (e.g. 'rea_mcp', 'debian_toolkit', 'context7').", required = true),
+                ToolParameterProperty("tool_name", "string", "Name of the tool on that MCP server (e.g. 'inspect_apk', 'analyze_dex', 'run_apktool', 'python_eval').", required = true),
                 ToolParameterProperty("arguments_json", "string", "JSON object of arguments to pass to the MCP tool.", required = false)
             ),
             isWriteTool = false
@@ -1322,7 +1334,9 @@ Actions:
                                     appendLine("- [${if (c.enabled) "ON" else "OFF"}] ${c.id} (${c.name} | ${c.transport.uppercase()}) -> $target")
                                     appendLine("  Status : ${c.lastStatus}")
                                     if (c.cachedTools.isNotEmpty()) {
-                                        appendLine("  Tools  : ${c.cachedTools.joinToString(", ") { "${it.name} (${it.qualifiedName})" }}")
+                                        val sample = c.cachedTools.take(20).joinToString(", ") { "${it.name} (${it.qualifiedName})" }
+                                        val extra = if (c.cachedTools.size > 20) " ... (+${c.cachedTools.size - 20} tool lainnya, gunakan search_mcp_tools untuk mencari)" else ""
+                                        appendLine("  Tools (${c.cachedTools.size}) : $sample$extra")
                                     }
                                 }
                             }.trim()
@@ -1385,6 +1399,20 @@ Actions:
                         }
                         else -> "Error: action '$action' tidak dikenal pada manage_mcp_connectors."
                     }
+                }
+
+                "search_mcp_tools" -> {
+                    val query = args.str("query")
+                    val category = args.str("category")
+                    val serverId = args.str("server_id")
+                    val maxResults = args.long("max_results", 25L).toInt().coerceIn(1, 60)
+                    onProgressUpdate?.invoke("Mencari MCP tools: '${query.ifBlank { category.ifBlank { "all" } }}'…")
+                    McpClientHub.formatSearchMcpToolsReport(
+                        query = query,
+                        category = category,
+                        serverId = serverId,
+                        maxResults = maxResults
+                    )
                 }
 
                 "call_mcp_tool" -> {

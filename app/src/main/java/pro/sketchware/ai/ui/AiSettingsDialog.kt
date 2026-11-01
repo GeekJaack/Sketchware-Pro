@@ -1,381 +1,472 @@
 package pro.sketchware.ai.ui
 
+import android.app.Dialog
 import android.content.Context
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.graphics.ColorUtils
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.divider.MaterialDivider
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import pro.sketchware.R
+import pro.sketchware.ai.config.AgentLanguage
 import pro.sketchware.ai.config.AiConfigManager
 import pro.sketchware.ai.config.AiProviderType
+import pro.sketchware.ai.config.AiStrings
 import pro.sketchware.utility.SketchwareUtil
-import pro.sketchware.utility.ThemeUtils
 import com.google.android.material.R as MR
 
+/**
+ * Dedicated full-screen DeerFlow 2.0 Studio for API Key Vault, LLM Provider Selection,
+ * Model Presets, Saved Profiles, and Agent Execution Parameters.
+ *
+ * Separated completely from MCP Connectors, Plugins, and Skills views.
+ */
 object AiSettingsDialog {
 
     @JvmStatic
     fun show(context: Context, onSaved: (() -> Unit)? = null) {
         val config = AiConfigManager(context)
-        val dp4 = SketchwareUtil.dpToPx(4f)
-        val dp6 = SketchwareUtil.dpToPx(6f)
-        val dp8 = SketchwareUtil.dpToPx(8f)
-        val dp10 = SketchwareUtil.dpToPx(10f)
-        val dp12 = SketchwareUtil.dpToPx(12f)
-        val dp16 = SketchwareUtil.dpToPx(16f)
+        val isDark = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        val p = DeerFlowTheme.palette(isDark)
 
-        val cSurfaceLow = ThemeUtils.getColor(context, MR.attr.colorSurfaceContainerLow)
-        val cSurfaceHigh = ThemeUtils.getColor(context, MR.attr.colorSurfaceContainerHigh)
-        val cOnSurface = ThemeUtils.getColor(context, MR.attr.colorOnSurface)
-        val cOnSurfaceVar = ThemeUtils.getColor(context, MR.attr.colorOnSurfaceVariant)
-        val cOutline = ThemeUtils.getColor(context, MR.attr.colorOutlineVariant)
-        val cPrimary = ThemeUtils.getColor(context, R.attr.colorPrimary)
-        val cError = ThemeUtils.getColor(context, R.attr.colorError)
+        fun dp(v: Float) = SketchwareUtil.dpToPx(v)
+        fun rounded(color: Int, radiusDp: Float, stroke: Int? = null) = GradientDrawable().apply {
+            cornerRadius = dp(radiusDp).toFloat()
+            setColor(color)
+            if (stroke != null) setStroke(maxOf(1, dp(1f)), stroke)
+        }
+
+        val dialog = Dialog(context, android.R.style.Theme_DeviceDefault_NoActionBar)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(p.background)
+        }
+
+        // ------------------------------------------------------------------
+        // Top App Bar (DeerFlow Studio Header)
+        // ------------------------------------------------------------------
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(p.sidebar)
+            setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+        }
+
+        val btnBack = TextView(context).apply {
+            text = "←"
+            textSize = 18f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(p.foreground)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(dp(40f), dp(40f))
+            background = rounded(p.card, 12f, p.border)
+            isClickable = true
+            setOnClickListener { dialog.dismiss() }
+        }
+        header.addView(btnBack)
+
+        val titleCol = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(12f)
+            }
+        }
+        val tvHeaderTitle = TextView(context).apply {
+            text = "🔑 API Key & Model Studio"
+            textSize = 16.5f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(p.foreground)
+        }
+        val tvHeaderSubtitle = TextView(context).apply {
+            text = "Konfigurasi Provider LLM, Brankas API Key, Model Preset & Otonomi Agent"
+            textSize = 11.5f
+            setTextColor(p.mutedForeground)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        titleCol.addView(tvHeaderTitle)
+        titleCol.addView(tvHeaderSubtitle)
+        header.addView(titleCol)
+
+        val btnSaveHeader = MaterialButton(context).apply {
+            text = "Simpan"
+            textSize = 12f
+            isAllCaps = false
+            backgroundTintList = ColorStateList.valueOf(p.ring)
+            setTextColor(Color.WHITE)
+            cornerRadius = dp(10f)
+            minHeight = dp(38f)
+        }
+        header.addView(btnSaveHeader)
+        root.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        root.addView(View(context).apply { setBackgroundColor(p.border) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1))
 
         val scroll = ScrollView(context).apply {
             isFillViewport = true
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
         }
-        val root = LinearLayout(context).apply {
+        val content = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp16, dp12, dp16, dp12)
+            setPadding(dp(16f), dp(14f), dp(16f), dp(28f))
         }
-        scroll.addView(root)
+        scroll.addView(content)
+        root.addView(scroll)
 
-        val providerTypes = AiProviderType.entries
         var selectedProvider = config.providerType
-        var ui = pro.sketchware.ai.config.AiStrings.current(context)
+        var ui = AiStrings.current(context)
 
-        // 0. Language Selection (Global / Multi-Country Support)
-        val langLabel = TextView(context).apply {
-            text = ui.settingsLanguageLabel
-            textSize = 13f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cOnSurface)
-            setPadding(0, 0, 0, dp4)
+        fun sectionCard(): LinearLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = rounded(p.card, 14f, p.border)
+            setPadding(dp(14f), dp(12f), dp(14f), dp(14f))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(12f)
+            }
         }
-        root.addView(langLabel)
 
-        val btnSelectLanguage = MaterialButton(
-            context,
-            null,
-            com.google.android.material.R.attr.materialButtonOutlinedStyle
-        ).apply {
-            val activeLang = config.agentLanguage
-            text = if (activeLang == pro.sketchware.ai.config.AgentLanguage.AUTO) {
-                "${activeLang.displayLabel} → ${activeLang.resolved().displayLabel}"
-            } else {
-                activeLang.displayLabel
+        fun sectionHeader(badge: String, title: String, desc: String): View = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(8f))
+            val top = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
             }
-            textSize = 12f
-            minHeight = SketchwareUtil.dpToPx(40f)
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            top.addView(TextView(context).apply {
+                text = badge
+                textSize = 10f
+                typeface = Typeface.MONOSPACE
+                setTypeface(typeface, Typeface.BOLD)
+                setTextColor(p.ring)
+                background = rounded(ColorUtils.setAlphaComponent(p.ring, 28), 6f)
+                setPadding(dp(7f), dp(2f), dp(7f), dp(2f))
+            })
+            top.addView(TextView(context).apply {
+                text = title
+                textSize = 14f
+                setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+                setTextColor(p.foreground)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    marginStart = dp(8f)
+                }
+            })
+            addView(top)
+            addView(TextView(context).apply {
+                text = desc
+                textSize = 11.5f
+                setTextColor(p.mutedForeground)
+                setPadding(0, dp(3f), 0, 0)
+            })
         }
-        root.addView(
-            btnSelectLanguage,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp10
-            }
+
+        // ==================================================================
+        // CARD 1: Provider Selection Cards
+        // ==================================================================
+        val providerCard = sectionCard()
+        val tvProviderHead = sectionHeader(
+            "PROVIDER",
+            ui.settingsProviderLabel,
+            "Pilih penyedia layanan LLM aktif. Setiap provider menyimpan API Key, Model ID, dan Base URL secara terpisah."
+        )
+        providerCard.addView(tvProviderHead)
+
+        val providerScroll = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+        }
+        val providerRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4f), 0, dp(2f))
+        }
+        providerScroll.addView(providerRow)
+        providerCard.addView(providerScroll)
+        content.addView(providerCard)
+
+        // ==================================================================
+        // CARD 2: API Key Vault & Model Configuration
+        // ==================================================================
+        val credentialsCard = sectionCard()
+        credentialsCard.addView(
+            sectionHeader(
+                "CREDENTIALS & MODEL",
+                "Brankas API Key & Model Aktif",
+                "Masukkan API Key dan pilih atau simpan Model ID kustom untuk provider yang dipilih."
+            )
         )
 
-        // 1. Provider Selection
-        val providerLabel = TextView(context).apply {
-            text = ui.settingsProviderLabel
-            textSize = 13f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cOnSurface)
-            setPadding(0, 0, 0, dp4)
-        }
-        root.addView(providerLabel)
-
-        val providerChipGroup = ChipGroup(context).apply {
-            isSingleSelection = true
-            isSelectionRequired = true
-        }
-        root.addView(providerChipGroup)
-
-        // 2. API Key Input + Status
         val tvKeyStatus = TextView(context).apply {
-            textSize = 11.5f
-            setPadding(0, dp8, 0, dp4)
+            textSize = 12f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setPadding(dp(10f), dp(6f), dp(10f), dp(6f))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = dp(8f)
+            }
         }
-        root.addView(tvKeyStatus)
+        credentialsCard.addView(tvKeyStatus)
 
         val tilApiKey = TextInputLayout(context).apply {
             hint = "API Key"
             endIconMode = TextInputLayout.END_ICON_PASSWORD_TOGGLE
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
         val etApiKey = TextInputEditText(tilApiKey.context).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             setSingleLine(true)
+            setTextColor(p.foreground)
         }
         tilApiKey.addView(etApiKey)
-        root.addView(
-            tilApiKey,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
+        credentialsCard.addView(tilApiKey, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // 3. Model ID Input + Save/Delete Model Presets
         val tilModel = TextInputLayout(context).apply {
-            hint = "Model ID (contoh: gemini-2.5-pro, glm-5.3-flash, claude-sonnet-4-20250514)"
+            hint = "Model ID (contoh: gemini-2.5-pro, gpt-4.1, claude-sonnet-4-20250514)"
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
         val etModel = TextInputEditText(tilModel.context).apply {
             setSingleLine(true)
+            setTextColor(p.foreground)
         }
         tilModel.addView(etModel)
-        root.addView(
+        credentialsCard.addView(
             tilModel,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp10
+                topMargin = dp(10f)
             }
         )
 
         val modelHeaderRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp6, 0, dp4)
+            setPadding(0, dp(8f), 0, dp(4f))
         }
         val tvModelPresetLabel = TextView(context).apply {
-            text = "Preset & Model Tersimpan (ketuk × untuk hapus model kustom):"
+            text = "Preset & Model Kustom (ketuk untuk memilih, × untuk hapus):"
             textSize = 11.5f
-            setTextColor(cOnSurfaceVar)
+            setTextColor(p.mutedForeground)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnAddModel = TextView(context).apply {
             text = "+ Simpan Model"
             textSize = 11.5f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cPrimary)
-            setPadding(dp8, dp4, dp8, dp4)
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(p.ring)
+            background = rounded(ColorUtils.setAlphaComponent(p.ring, 24), 8f, p.ring)
+            setPadding(dp(10f), dp(4f), dp(10f), dp(4f))
             isClickable = true
         }
         modelHeaderRow.addView(tvModelPresetLabel)
         modelHeaderRow.addView(btnAddModel)
-        root.addView(modelHeaderRow)
+        credentialsCard.addView(modelHeaderRow)
 
         val modelPresetGroup = ChipGroup(context).apply {
             isSingleSelection = false
         }
-        root.addView(
-            modelPresetGroup,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        )
+        credentialsCard.addView(modelPresetGroup, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        // 4. Base URL Endpoint
         val tilBaseUrl = TextInputLayout(context).apply {
             hint = "Base URL Endpoint"
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
         val etBaseUrl = TextInputEditText(tilBaseUrl.context).apply {
             setSingleLine(true)
+            setTextColor(p.foreground)
         }
         tilBaseUrl.addView(etBaseUrl)
-        root.addView(
+        credentialsCard.addView(
             tilBaseUrl,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp10
+                topMargin = dp(10f)
             }
         )
 
-        // 5. Action Buttons: Simpan Key & Model / Hapus API Key
         val keyActionRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val btnSaveKeyModel = MaterialButton(
-            context,
-            null,
-            com.google.android.material.R.attr.materialButtonOutlinedStyle
-        ).apply {
-            text = "Simpan Key & Model"
+        val btnSaveKeyModel = MaterialButton(context, null, MR.attr.materialButtonOutlinedStyle).apply {
+            text = ui.settingsSaveKeyBtn
             textSize = 11.5f
-            minHeight = SketchwareUtil.dpToPx(38f)
+            isAllCaps = false
+            minHeight = dp(40f)
+            setTextColor(p.ring)
+            strokeColor = ColorStateList.valueOf(p.ring)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp6
+                marginEnd = dp(6f)
             }
         }
-        val btnDeleteKey = MaterialButton(
-            context,
-            null,
-            com.google.android.material.R.attr.materialButtonOutlinedStyle
-        ).apply {
-            text = "Hapus API Key"
+        val btnDeleteKey = MaterialButton(context, null, MR.attr.materialButtonOutlinedStyle).apply {
+            text = ui.settingsDeleteKeyBtn
             textSize = 11.5f
-            minHeight = SketchwareUtil.dpToPx(38f)
-            setTextColor(cError)
-            strokeColor = ColorStateList.valueOf(cError)
+            isAllCaps = false
+            minHeight = dp(40f)
+            setTextColor(p.destructive)
+            strokeColor = ColorStateList.valueOf(p.destructive)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp6
+                marginStart = dp(6f)
             }
         }
         keyActionRow.addView(btnSaveKeyModel)
         keyActionRow.addView(btnDeleteKey)
-        root.addView(
+        credentialsCard.addView(
             keyActionRow,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp10
+                topMargin = dp(12f)
             }
         )
+        content.addView(credentialsCard)
 
-        // 6. Saved API Key & Model Profiles List
-        val savedSection = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                cornerRadius = dp12.toFloat()
-                setColor(cSurfaceLow)
-                setStroke(maxOf(1, SketchwareUtil.dpToPx(1f)), cOutline)
-            }
-            setPadding(dp12, dp10, dp12, dp10)
-        }
+        // ==================================================================
+        // CARD 3: Saved API Key & Model Profiles Switcher
+        // ==================================================================
+        val profilesCard = sectionCard()
         val savedHeaderRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         val tvSavedTitle = TextView(context).apply {
-            text = "Daftar API Key & Model Tersimpan"
-            textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(cOnSurface)
+            text = "🗂️ ${ui.settingsSavedProfilesTitle}"
+            textSize = 14f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(p.foreground)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnClearAllKeys = TextView(context).apply {
             text = "Hapus Semua"
-            textSize = 11f
-            setTextColor(cError)
-            setPadding(dp6, dp4, dp6, dp4)
+            textSize = 11.5f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(p.destructive)
+            setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
             isClickable = true
         }
         savedHeaderRow.addView(tvSavedTitle)
         savedHeaderRow.addView(btnClearAllKeys)
-        savedSection.addView(savedHeaderRow)
+        profilesCard.addView(savedHeaderRow)
+
+        profilesCard.addView(TextView(context).apply {
+            text = "Ketuk salah satu profil di bawah untuk langsung beralih provider, API key, dan model dengan 1 klik."
+            textSize = 11.5f
+            setTextColor(p.mutedForeground)
+            setPadding(0, dp(2f), 0, dp(8f))
+        })
 
         val savedListContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp6, 0, 0)
         }
-        savedSection.addView(savedListContainer)
-        root.addView(
-            savedSection,
+        profilesCard.addView(savedListContainer)
+        content.addView(profilesCard)
+
+        // ==================================================================
+        // CARD 4: Agent Execution, Long-Horizon & Language Preferences
+        // ==================================================================
+        val executionCard = sectionCard()
+        executionCard.addView(
+            sectionHeader(
+                "AGENT HARNESS",
+                "Parameter Eksekusi & Bahasa Agent",
+                "Atur batas langkah otonom (Long-Horizon), auto-compile self-healing, checkpoint, dan bahasa respons."
+            )
+        )
+
+        val langLabel = TextView(context).apply {
+            text = ui.settingsLanguageLabel
+            textSize = 12.5f
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(p.foreground)
+            setPadding(0, dp(2f), 0, dp(4f))
+        }
+        executionCard.addView(langLabel)
+
+        val btnSelectLanguage = MaterialButton(context, null, MR.attr.materialButtonOutlinedStyle).apply {
+            val activeLang = config.agentLanguage
+            text = if (activeLang == AgentLanguage.AUTO) {
+                "${activeLang.displayLabel} → ${activeLang.resolved().displayLabel}"
+            } else {
+                activeLang.displayLabel
+            }
+            textSize = 12f
+            isAllCaps = false
+            minHeight = dp(40f)
+            setTextColor(p.foreground)
+            strokeColor = ColorStateList.valueOf(p.border)
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        }
+        executionCard.addView(
+            btnSelectLanguage,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp12
+                bottomMargin = dp(8f)
             }
         )
 
-        root.addView(
-            MaterialDivider(context),
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp12
-                bottomMargin = dp8
-            }
-        )
-
-        // 7. Agent Execution & MCP Settings
         val cbUnlimitedSteps = MaterialCheckBox(context).apply {
-            text = "♾️ Langkah Long-Horizon Tidak Terbatas (Unlimited Steps — Biarkan AI Agent Bekerja Otonom Hingga Selesai)"
+            text = "♾️ Langkah Long-Horizon Tidak Terbatas (Unlimited Steps — Agent bekerja otonom hingga tuntas)"
             isChecked = config.unlimitedSteps
+            setTextColor(p.foreground)
         }
-        root.addView(cbUnlimitedSteps)
+        executionCard.addView(cbUnlimitedSteps)
 
         val tilMaxSteps = TextInputLayout(context).apply {
             hint = "Maksimum Langkah Manual bila Unlimited dimatikan (5 - 1000)"
             isEnabled = !config.unlimitedSteps
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
         }
         val etMaxSteps = TextInputEditText(tilMaxSteps.context).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             setSingleLine(true)
             setText(config.maxStepsPerRun.toString())
+            setTextColor(p.foreground)
         }
         tilMaxSteps.addView(etMaxSteps)
         cbUnlimitedSteps.setOnCheckedChangeListener { _, checked ->
             tilMaxSteps.isEnabled = !checked
         }
-        root.addView(
+        executionCard.addView(
             tilMaxSteps,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp4
+                topMargin = dp(4f)
+                bottomMargin = dp(4f)
             }
         )
 
         val cbAutoBuild = MaterialCheckBox(context).apply {
             text = "Otomatis Compile & Self-Heal setelah Agent menulis kode/blok"
             isChecked = config.autoBuildAndHeal
+            setTextColor(p.foreground)
         }
-        root.addView(cbAutoBuild)
+        executionCard.addView(cbAutoBuild)
 
         val cbAutoBackup = MaterialCheckBox(context).apply {
             text = "Otomatis buat Snapshot Checkpoint sebelum Agent memodifikasi proyek"
             isChecked = config.autoBackupBeforeRun
+            setTextColor(p.foreground)
         }
-        root.addView(cbAutoBackup)
+        executionCard.addView(cbAutoBackup)
+        content.addView(executionCard)
 
-        val lanIp = pro.sketchware.ai.mcp.SketchwareMcpServer.getLanIpAddress()
-        val mcpRunning = pro.sketchware.ai.mcp.SketchwareMcpServer.isRunning()
-        val mcpTitle = TextView(context).apply {
-            text = "🌐 Sketchware MCP & External Agent Bridge\n" +
-                "Status: ${if (mcpRunning) "AKTIF" else "NONAKTIF"} | Port: ${config.mcpServerPort}\n" +
-                "• ADB URL: http://127.0.0.1:${config.mcpServerPort}/mcp\n" +
-                "• Wi-Fi LAN: http://$lanIp:${config.mcpServerPort}/mcp"
-            textSize = 12f
-            setPadding(dp12, dp10, dp12, dp10)
-        }
-        root.addView(mcpTitle)
-
-        val cbMcpEnabled = MaterialCheckBox(context).apply {
-            text = "Aktifkan Sketchware Live MCP Server"
-            isChecked = config.mcpServerEnabled
-        }
-        root.addView(cbMcpEnabled)
-
-        val tilMcpPort = TextInputLayout(context).apply {
-            hint = "Port MCP Server (Default: 8765)"
-            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
-        }
-        val etMcpPort = TextInputEditText(tilMcpPort.context).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(config.mcpServerPort.toString())
-            setSingleLine(true)
-        }
-        tilMcpPort.addView(etMcpPort)
-        root.addView(
-            tilMcpPort,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp8
-            }
-        )
-
-        val btnOpenExtensions = MaterialButton(
-            context,
-            null,
-            com.google.android.material.R.attr.materialButtonOutlinedStyle
-        ).apply {
-            text = "🔌 Kelola Konektor MCP, Plugin & Skill (SKILL.md)"
-            textSize = 12f
-            setOnClickListener {
-                ExtensionsHubDialog.show(context, initialTab = 0, onChanged = onSaved)
-            }
-        }
-        root.addView(
-            btnOpenExtensions,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp10
-            }
-        )
-
+        // ==================================================================
+        // Helper functions
+        // ==================================================================
         fun defaultPresetsFor(provider: AiProviderType): List<String> = when (provider) {
             AiProviderType.GEMINI -> listOf("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash")
             AiProviderType.OPENAI -> listOf("gpt-4.1", "gpt-4.1-mini", "o4-mini")
@@ -388,14 +479,24 @@ object AiSettingsDialog {
             AiProviderType.CUSTOM -> listOf("glm-5.3-flash", "deepseek-chat", "qwen2.5-coder:32b", "llama-3.3-70b-versatile")
         }
 
+        fun providerDescription(provider: AiProviderType): String = when (provider) {
+            AiProviderType.GEMINI -> "Google AI Studio · Gemini 2.5"
+            AiProviderType.OPENAI -> "OpenAI Platform · GPT-4.1 / o4"
+            AiProviderType.OPENROUTER -> "OpenRouter · Multi-Model Hub"
+            AiProviderType.CLAUDE -> "Anthropic · Claude 4 / 3.7"
+            AiProviderType.CUSTOM -> "OpenAI-Compatible Endpoint"
+        }
+
         fun updateKeyStatusLabel(provider: AiProviderType) {
             val savedKey = config.getApiKey(provider)
             if (savedKey.isNotEmpty()) {
-                tvKeyStatus.text = "✓ API Key ${provider.name} tersimpan (${AiConfigManager.maskApiKey(savedKey)})"
-                tvKeyStatus.setTextColor(cPrimary)
+                tvKeyStatus.text = "✓ API Key ${provider.name} aktif (${AiConfigManager.maskApiKey(savedKey)})"
+                tvKeyStatus.setTextColor(p.success)
+                tvKeyStatus.background = rounded(ColorUtils.setAlphaComponent(p.success, 24), 8f, p.success)
             } else {
-                tvKeyStatus.text = "Belum ada API Key tersimpan untuk ${provider.name}"
-                tvKeyStatus.setTextColor(cOnSurfaceVar)
+                tvKeyStatus.text = "⚠ Belum ada API Key tersimpan untuk ${provider.name}"
+                tvKeyStatus.setTextColor(p.warning)
+                tvKeyStatus.background = rounded(ColorUtils.setAlphaComponent(p.warning, 24), 8f, p.warning)
             }
         }
 
@@ -426,23 +527,72 @@ object AiSettingsDialog {
             }
         }
 
-        fun selectProviderChip(provider: AiProviderType) {
-            for (i in 0 until providerChipGroup.childCount) {
-                val c = providerChipGroup.getChildAt(i) as? Chip ?: continue
-                c.isChecked = (c.text?.toString() == provider.name)
-            }
-        }
-
+        lateinit var renderProviderCards: () -> Unit
         lateinit var renderSavedProfiles: () -> Unit
 
         fun populateProviderFields(provider: AiProviderType) {
             selectedProvider = provider
-            selectProviderChip(provider)
             etApiKey.setText(config.getApiKey(provider))
             etModel.setText(config.getModelId(provider))
             etBaseUrl.setText(config.getBaseUrl(provider))
             updateKeyStatusLabel(provider)
             renderModelChips(provider)
+            renderProviderCards()
+        }
+
+        renderProviderCards = {
+            providerRow.removeAllViews()
+            for (prov in AiProviderType.entries) {
+                val active = (prov == selectedProvider)
+                val hasKey = config.getApiKey(prov).isNotEmpty()
+                val item = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = rounded(
+                        if (active) ColorUtils.setAlphaComponent(p.ring, 28) else p.secondary,
+                        12f,
+                        if (active) p.ring else p.border
+                    )
+                    setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
+                    layoutParams = LinearLayout.LayoutParams(dp(148f), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        marginEnd = dp(8f)
+                    }
+                    isClickable = true
+                    setOnClickListener {
+                        config.setApiKey(etApiKey.text?.toString().orEmpty(), selectedProvider)
+                        config.setModelId(etModel.text?.toString().orEmpty(), selectedProvider)
+                        config.setBaseUrl(etBaseUrl.text?.toString().orEmpty(), selectedProvider)
+                        populateProviderFields(prov)
+                        renderSavedProfiles()
+                    }
+                }
+                val top = LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                top.addView(TextView(context).apply {
+                    text = prov.name
+                    textSize = 13f
+                    setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+                    setTextColor(if (active) p.ring else p.foreground)
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                top.addView(TextView(context).apply {
+                    text = if (hasKey) "● KEY" else "○"
+                    textSize = 9.5f
+                    setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+                    setTextColor(if (hasKey) p.success else p.mutedForeground)
+                })
+                item.addView(top)
+                item.addView(TextView(context).apply {
+                    text = providerDescription(prov)
+                    textSize = 10.5f
+                    setTextColor(p.mutedForeground)
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(0, dp(3f), 0, 0)
+                })
+                providerRow.addView(item)
+            }
         }
 
         renderSavedProfiles = {
@@ -451,9 +601,9 @@ object AiSettingsDialog {
             btnClearAllKeys.visibility = if (profiles.isEmpty()) View.GONE else View.VISIBLE
             if (profiles.isEmpty()) {
                 savedListContainer.addView(TextView(context).apply {
-                    text = "Belum ada profil API Key & Model yang disimpan. Isi API Key & Model di atas lalu ketuk 'Simpan Key & Model'."
+                    text = "Belum ada profil API Key & Model yang disimpan. Isi API Key & Model di atas lalu ketuk '${ui.settingsSaveKeyBtn}'."
                     textSize = 11.5f
-                    setTextColor(cOnSurfaceVar)
+                    setTextColor(p.mutedForeground)
                 })
             } else {
                 for (profile in profiles) {
@@ -464,14 +614,12 @@ object AiSettingsDialog {
                     val row = LinearLayout(context).apply {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER_VERTICAL
-                        background = GradientDrawable().apply {
-                            cornerRadius = dp8.toFloat()
-                            setColor(if (isActive) cSurfaceHigh else Color.TRANSPARENT)
-                            if (isActive) {
-                                setStroke(maxOf(1, SketchwareUtil.dpToPx(1f)), cPrimary)
-                            }
-                        }
-                        setPadding(dp10, dp8, dp8, dp8)
+                        background = rounded(
+                            if (isActive) ColorUtils.setAlphaComponent(p.ring, 24) else p.secondary,
+                            10f,
+                            if (isActive) p.ring else p.border
+                        )
+                        setPadding(dp(12f), dp(10f), dp(10f), dp(10f))
                         isClickable = true
                         setOnClickListener {
                             config.providerType = profile.provider
@@ -490,17 +638,17 @@ object AiSettingsDialog {
                         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     }
                     infoCol.addView(TextView(context).apply {
-                        text = "${if (isActive) "✓ " else ""}${profile.provider.name} · ${profile.modelId}"
+                        text = "${if (isActive) "✓ AKTIF · " else ""}${profile.provider.name} · ${profile.modelId}"
                         textSize = 12.5f
-                        setTypeface(typeface, Typeface.BOLD)
-                        setTextColor(if (isActive) cPrimary else cOnSurface)
+                        setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+                        setTextColor(if (isActive) p.ring else p.foreground)
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
                     })
                     infoCol.addView(TextView(context).apply {
                         text = "Key: ${AiConfigManager.maskApiKey(profile.apiKey)} · ${profile.baseUrl}"
                         textSize = 11f
-                        setTextColor(cOnSurfaceVar)
+                        setTextColor(p.mutedForeground)
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.MIDDLE
                     })
@@ -508,8 +656,8 @@ object AiSettingsDialog {
 
                     val btnDelItem = ImageView(context).apply {
                         setImageResource(R.drawable.ic_mtrl_delete)
-                        imageTintList = ColorStateList.valueOf(cError)
-                        setPadding(dp6, dp6, dp6, dp6)
+                        imageTintList = ColorStateList.valueOf(p.destructive)
+                        setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
                         isClickable = true
                         contentDescription = "Hapus"
                         setOnClickListener {
@@ -521,43 +669,27 @@ object AiSettingsDialog {
                                     updateKeyStatusLabel(selectedProvider)
                                 }
                             }
+                            renderProviderCards()
                             renderSavedProfiles()
                             onSaved?.invoke()
-                            SketchwareUtil.toast("API Key & Model '${profile.modelId}' dihapus")
+                            SketchwareUtil.toast("Profil '${profile.modelId}' dihapus")
                         }
                     }
                     row.addView(
                         btnDelItem,
-                        LinearLayout.LayoutParams(SketchwareUtil.dpToPx(32f), SketchwareUtil.dpToPx(32f)).apply {
-                            marginStart = dp6
+                        LinearLayout.LayoutParams(dp(34f), dp(34f)).apply {
+                            marginStart = dp(6f)
                         }
                     )
 
                     savedListContainer.addView(
                         row,
                         LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                            bottomMargin = dp4
+                            bottomMargin = dp(6f)
                         }
                     )
                 }
             }
-        }
-
-        for (p in providerTypes) {
-            val chip = Chip(context).apply {
-                text = p.name
-                isCheckable = true
-                isChecked = (p == selectedProvider)
-                setOnClickListener {
-                    // Save current edits to previous provider before switching
-                    config.setApiKey(etApiKey.text?.toString().orEmpty(), selectedProvider)
-                    config.setModelId(etModel.text?.toString().orEmpty(), selectedProvider)
-                    config.setBaseUrl(etBaseUrl.text?.toString().orEmpty(), selectedProvider)
-                    populateProviderFields(p)
-                    renderSavedProfiles()
-                }
-            }
-            providerChipGroup.addView(chip)
         }
 
         btnAddModel.setOnClickListener {
@@ -587,6 +719,7 @@ object AiSettingsDialog {
             config.saveProfile(selectedProvider, keyText, modelText, urlText)
             updateKeyStatusLabel(selectedProvider)
             renderModelChips(selectedProvider)
+            renderProviderCards()
             renderSavedProfiles()
             onSaved?.invoke()
             SketchwareUtil.toast("API Key & Model ($modelText) disimpan!")
@@ -596,7 +729,6 @@ object AiSettingsDialog {
             val currentKey = etApiKey.text?.toString()?.trim().orEmpty()
                 .ifEmpty { config.getApiKey(selectedProvider) }
             config.clearApiKey(selectedProvider)
-            // Also remove matching saved profile for this provider + key if present
             if (currentKey.isNotEmpty()) {
                 config.getSavedProfiles()
                     .filter { it.provider == selectedProvider && it.apiKey == currentKey }
@@ -604,6 +736,7 @@ object AiSettingsDialog {
             }
             etApiKey.setText("")
             updateKeyStatusLabel(selectedProvider)
+            renderProviderCards()
             renderSavedProfiles()
             onSaved?.invoke()
             SketchwareUtil.toast("API Key untuk ${selectedProvider.name} berhasil dihapus")
@@ -618,6 +751,7 @@ object AiSettingsDialog {
                     config.clearAllApiKeys()
                     etApiKey.setText("")
                     updateKeyStatusLabel(selectedProvider)
+                    renderProviderCards()
                     renderSavedProfiles()
                     onSaved?.invoke()
                     SketchwareUtil.toast("Semua API Key telah dihapus")
@@ -625,7 +759,6 @@ object AiSettingsDialog {
                 .show()
         }
 
-        // Seed existing active config into saved profiles if not empty so user immediately sees their active key/model
         val initialKey = config.getApiKey(selectedProvider)
         if (initialKey.isNotEmpty() && config.getSavedProfiles().isEmpty()) {
             config.saveProfile(
@@ -640,56 +773,56 @@ object AiSettingsDialog {
         renderSavedProfiles()
 
         fun refreshLanguageLabels() {
-            ui = pro.sketchware.ai.config.AiStrings.current(context)
+            ui = AiStrings.current(context)
             val activeLang = config.agentLanguage
-            btnSelectLanguage.text = if (activeLang == pro.sketchware.ai.config.AgentLanguage.AUTO) {
+            btnSelectLanguage.text = if (activeLang == AgentLanguage.AUTO) {
                 "${activeLang.displayLabel} → ${activeLang.resolved().displayLabel}"
             } else {
                 activeLang.displayLabel
             }
             langLabel.text = ui.settingsLanguageLabel
-            providerLabel.text = ui.settingsProviderLabel
             btnSaveKeyModel.text = ui.settingsSaveKeyBtn
             btnDeleteKey.text = ui.settingsDeleteKeyBtn
-            tvSavedTitle.text = ui.settingsSavedProfilesTitle
+            tvSavedTitle.text = "🗂️ ${ui.settingsSavedProfilesTitle}"
         }
         refreshLanguageLabels()
 
         btnSelectLanguage.setOnClickListener {
-            pro.sketchware.ai.config.AiStrings.showLanguagePickerDialog(context) {
+            AiStrings.showLanguagePickerDialog(context) {
                 refreshLanguageLabels()
                 onSaved?.invoke()
             }
         }
 
-        MaterialAlertDialogBuilder(context)
-            .setTitle(ui.settingsDialogTitle)
-            .setIcon(R.drawable.ic_mtrl_settings)
-            .setView(scroll)
-            .setPositiveButton(ui.saveAndCloseText) { d, _ ->
-                val keyText = etApiKey.text?.toString()?.trim().orEmpty()
-                val modelText = etModel.text?.toString()?.trim().orEmpty().ifEmpty { selectedProvider.defaultModel }
-                val urlText = etBaseUrl.text?.toString()?.trim().orEmpty().ifEmpty { selectedProvider.defaultBaseUrl }
-                config.providerType = selectedProvider
-                config.setApiKey(keyText, selectedProvider)
-                config.setModelId(modelText, selectedProvider)
-                config.setBaseUrl(urlText, selectedProvider)
-                if (keyText.isNotEmpty() || selectedProvider == AiProviderType.CUSTOM) {
-                    config.saveProfile(selectedProvider, keyText, modelText, urlText)
-                }
-                val maxSteps = etMaxSteps.text?.toString()?.toIntOrNull() ?: 50
-                config.unlimitedSteps = cbUnlimitedSteps.isChecked
-                config.maxStepsPerRun = maxSteps
-                config.autoBuildAndHeal = cbAutoBuild.isChecked
-                config.autoBackupBeforeRun = cbAutoBackup.isChecked
-                config.mcpServerEnabled = cbMcpEnabled.isChecked
-                config.mcpServerPort = etMcpPort.text?.toString()?.toIntOrNull() ?: 8765
-                pro.sketchware.ai.mcp.SketchwareMcpServer.ensureStarted(context)
-                SketchwareUtil.toast("✓ ${ui.settingsDialogTitle}")
-                onSaved?.invoke()
-                d.dismiss()
+        btnSaveHeader.setOnClickListener {
+            val keyText = etApiKey.text?.toString()?.trim().orEmpty()
+            val modelText = etModel.text?.toString()?.trim().orEmpty().ifEmpty { selectedProvider.defaultModel }
+            val urlText = etBaseUrl.text?.toString()?.trim().orEmpty().ifEmpty { selectedProvider.defaultBaseUrl }
+            config.providerType = selectedProvider
+            config.setApiKey(keyText, selectedProvider)
+            config.setModelId(modelText, selectedProvider)
+            config.setBaseUrl(urlText, selectedProvider)
+            if (keyText.isNotEmpty() || selectedProvider == AiProviderType.CUSTOM) {
+                config.saveProfile(selectedProvider, keyText, modelText, urlText)
             }
-            .setNegativeButton(ui.closeText, null)
-            .show()
+            val maxSteps = etMaxSteps.text?.toString()?.toIntOrNull() ?: 50
+            config.unlimitedSteps = cbUnlimitedSteps.isChecked
+            config.maxStepsPerRun = maxSteps
+            config.autoBuildAndHeal = cbAutoBuild.isChecked
+            config.autoBackupBeforeRun = cbAutoBackup.isChecked
+            SketchwareUtil.toast("✓ Pengaturan API Key & Model disimpan")
+            onSaved?.invoke()
+            dialog.dismiss()
+        }
+
+        dialog.setContentView(root)
+        dialog.window?.apply {
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setBackgroundDrawable(ColorDrawable(p.background))
+            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            statusBarColor = p.sidebar
+            navigationBarColor = p.background
+        }
+        dialog.show()
     }
 }

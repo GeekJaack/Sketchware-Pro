@@ -326,7 +326,7 @@ object SkillManager {
         raw.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "-").trim('-').take(64)
 
     private fun seedBuiltInSkills() {
-        val marker = File(skillsRootDir(), ".seeded_v2")
+        val marker = File(skillsRootDir(), ".seeded_v3")
         if (marker.isFile) return
 
         val builtIns = listOf(
@@ -401,15 +401,20 @@ object SkillManager {
 
             Triple(
                 "patent-rea-apk-cloner",
-                "Patent Skill: REA Reverse Engineering & Full APK Project Cloner",
-                "Metodologi paten Reverse Engineer Anything (REA) untuk membedah file APK yang dilampirkan pengguna dan meng-clone menjadi proyek Sketchware Pro utuh hingga terkompilasi."
+                "Patent Skill: REA Reverse Engineering & Full APK Project Cloner (205 Non-ADB Tools)",
+                "Metodologi paten Reverse Engineer Anything (REA) menggunakan katalog 205 tools REA MCP (tanpa ADB) untuk mencari tool terbaik, membedah APK/DEX/SO/SQLite/Flutter/RN, dan meng-clone menjadi proyek Sketchware Pro utuh."
             ) to """
-                # Patent Skill: REA Reverse Engineering & Full APK Project Cloner
+                # Patent Skill: REA Reverse Engineering & Full APK Project Cloner (205 Non-ADB Tools)
 
                 Gunakan skill paten ini setiap kali pengguna melampirkan file `.apk` (melalui `+ Add Context -> Tambahkan File APK`) atau meminta untuk melakukan reverse engineering / full clone APK ke proyek Sketchware Pro:
 
+                ## Tahap 0: Pencarian & Pemilihan Tool dari Katalog 205 REA MCP (`search_mcp_tools`)
+                - Anda dilengkapi dengan **205 tools REA MCP** di 38 kategori (`Android Tools`, `Android APK`, `APKTool`, `Decompilation`, `Binary Analysis`, `Strings and Data Types`, `SQLite`, `Flutter`, `Frida Instrumentation`, `React Native / Hermes`, `Cryptography`, `Reconstruction`, dll. — seluruh tool ADB telah dihapus karena berjalan di perangkat Android).
+                - Sebelum atau selama membedah proyek, panggil `search_mcp_tools(query="<kata_kunci>", category="<kategori>")` untuk mencari tool REA yang paling sesuai dengan kebutuhan spesifik proyek (misalnya `search_mcp_tools(query="manifest")`, `search_mcp_tools(query="jadx")`, `search_mcp_tools(query="flutter")`, `search_mcp_tools(query="sqlite")`, `search_mcp_tools(query="strings")`).
+                - Setelah menemukan tool yang tepat beserta skema parameternya, panggil langsung via `mcp__rea_mcp__<nama_tool>` atau `call_mcp_tool(server_id="rea_mcp", tool_name="<nama_tool>", arguments_json="{...}")`.
+
                 ## Tahap 1: Eksekusi Otomatis `reconstruct_apk_project(action="full_clone")`
-                1. Panggil `reconstruct_apk_project(action="full_clone", apk_path="<path_apk>")`.
+                1. Panggil `reconstruct_apk_project(action="full_clone", apk_path="<path_apk>")` (atau `mcp__rea_mcp__rea_full_clone_to_sketchware`).
                 2. Tool ini secara otomatis akan:
                    - Membuat snapshot checkpoint proyek sebelum modifikasi.
                    - Mendekode binary `AndroidManifest.xml` dan menyinkronkan seluruh `<uses-permission>`.
@@ -417,12 +422,12 @@ object SkillManager {
                    - Mendekompilasi seluruh layout binary `res/layout/*.xml`, mengadaptasi tag ke format `ViewBean` Sketchware, dan membuat layar Activity serta CustomView secara otomatis.
                    - Menghasilkan dokumen **`rea_clone_blueprint.md`** di panel **📦 Artifacts**.
 
-                ## Tahap 2: Bedah Mendalam DEX Bytecode & Layout Asli
-                1. Baca laporan kelas DEX atau panggil `reconstruct_apk_project(action="analyze_dex", apk_path="<path_apk>", query="<NamaActivityAtauFitur>")` (atau `mcp__rea_mcp__rea_analyze_dex`).
-                2. Bila ingin memeriksa detail atribut asli dari layout tertentu sebelum diadaptasi, panggil `reconstruct_apk_project(action="decode_xml", apk_path="<path_apk>", xml_entry="res/layout/<nama>.xml")` atau baca dari `.sketchware/data/<sc_id>/files/rea_workspace/layouts/`.
+                ## Tahap 2: Bedah Mendalam DEX Bytecode, Native SO, & Layout Asli
+                1. Panggil `mcp__rea_mcp__inspect_apk`, `mcp__rea_mcp__analyze_dex`, `mcp__rea_mcp__run_apktool`, atau `mcp__rea_mcp__run_jadx` (serta tool spesifik hasil `search_mcp_tools`) untuk membedah arsitektur internal APK.
+                2. Bila ingin memeriksa detail atribut asli dari layout tertentu sebelum diadaptasi, panggil `mcp__rea_mcp__rea_decode_xml(apk_path="<path_apk>", xml_entry="res/layout/<nama>.xml")` atau baca dari `.sketchware/data/<sc_id>/files/rea_workspace/layouts/`.
                 3. Identifikasi untuk setiap Activity:
                    - Daftar field (`SharedPreferences`, `RequestNetwork`, `ArrayList<HashMap>`, variabel state, adapter).
-                   - Daftar method & algoritma bisnis, endpoint URL API, atau skema tabel SQLite.
+                   - Daftar method & algoritma bisnis, endpoint URL API, atau skema tabel SQLite (`mcp__rea_mcp__inspect_sqlite`).
 
                 ## Tahap 3: Rekonstruksi Logika Penuh (`BlockBean` + `Custom Java`)
                 1. Untuk setiap Activity yang telah di-clone, daftarkan variabel (`manage_variable`), list (`manage_list`), dan komponen (`add_component`: `Intent`, `SharedPreferences`, `RequestNetwork`, `Dialog`, `Timer`, dll.).
@@ -512,7 +517,7 @@ object SkillManager {
             val (id, name, desc) = info
             val dir = File(skillsRootDir(), id)
             val md = File(dir, "SKILL.md")
-            if (!md.exists()) {
+            if (!md.exists() || id == "patent-rea-apk-cloner") {
                 createOrUpdateSkill(id, name, desc, body)
             }
         }

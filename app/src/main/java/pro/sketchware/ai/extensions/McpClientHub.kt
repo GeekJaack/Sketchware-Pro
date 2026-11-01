@@ -183,48 +183,22 @@ object McpClientHub {
     fun callRemoteTool(serverId: String, toolName: String, arguments: JsonObject): String {
         ensureSeeded()
         val cleanId = SkillManager.sanitizeId(serverId)
+        val isReaAlias = cleanId == "rea_mcp" || cleanId == "rea"
         val conn = listConnectors().firstOrNull {
             it.id.equals(cleanId, ignoreCase = true) ||
-                it.id.replace('-', '_').equals(serverId.replace('-', '_'), ignoreCase = true)
+                it.id.replace('-', '_').equals(serverId.replace('-', '_'), ignoreCase = true) ||
+                (isReaAlias && (it.id == "rea_mcp" || it.id == "rea"))
         } ?: return "Error: Konektor MCP '$serverId' tidak ditemukan."
 
+        if (toolName.contains("_adb_") || toolName.endsWith("_adb")) {
+            return "Error: Tool ADB ('$toolName') telah dinonaktifkan karena tidak diperlukan di dalam perangkat Android secara langsung. Gunakan tool Android/APK/DEX/Shell bawaan."
+        }
+
         // Fast-path for built-in REA MCP when called on Android host
-        if (conn.id == "rea_mcp") {
-            try {
-                val apkPath = arguments.get("apk_path")?.asString.orEmpty()
-                val scId = pro.sketchware.ai.project.ProjectGateway.resolveDefaultScId() ?: "601"
-                val apkFile = pro.sketchware.ai.project.ApkProjectReconstructor.resolveApkFile(scId, apkPath)
-                when (toolName) {
-                    "rea_decode_xml" -> {
-                        val entry = arguments.get("xml_entry")?.asString?.ifBlank { "AndroidManifest.xml" } ?: "AndroidManifest.xml"
-                        if (apkFile.isFile) {
-                            val bytes = java.util.zip.ZipFile(apkFile).use { z ->
-                                val ze = z.getEntry(entry) ?: z.entries().asSequence().firstOrNull { it.name.endsWith(entry) }
-                                ze?.let { z.getInputStream(it).readBytes() }
-                            }
-                            if (bytes != null) {
-                                val xml = pro.sketchware.ai.project.ApkProjectReconstructor.decodeBinaryXmlPureKotlin(bytes)
-                                if (xml.isNotBlank()) return "=== MCP [rea_mcp :: rea_decode_xml] OK ===\n$xml"
-                            }
-                        }
-                    }
-                    "rea_analyze_dex" -> {
-                        val query = arguments.get("query")?.asString.orEmpty()
-                        if (apkFile.isFile) {
-                            val rep = pro.sketchware.ai.project.ApkProjectReconstructor.analyzeApkDex(apkFile, "", query, 80)
-                            val sb = StringBuilder()
-                            sb.appendLine("=== MCP [rea_mcp :: rea_analyze_dex] OK ===")
-                            sb.appendLine("DEX Files: ${rep.dexFilesCount} | Classes: ${rep.totalClassesCount} | Methods: ${rep.totalMethodsCount} | Fields: ${rep.totalFieldsCount}")
-                            for (c in rep.appClasses) {
-                                sb.appendLine("• ${c.className} (extends ${c.superClass}) -> methods=${c.methods.take(10)} fields=${c.fields.take(8)}")
-                            }
-                            if (rep.discoveredUrls.isNotEmpty()) sb.appendLine("URLs: ${rep.discoveredUrls}")
-                            if (rep.interestingStrings.isNotEmpty()) sb.appendLine("Strings: ${rep.interestingStrings}")
-                            return sb.toString().trim()
-                        }
-                    }
-                }
-            } catch (_: Throwable) {
+        if (conn.id == "rea_mcp" || conn.id == "rea") {
+            val fastOut = ReaMcpToolsCatalog.executeAndroidHostFastPath(toolName, arguments)
+            if (!fastOut.isNullOrBlank()) {
+                return fastOut
             }
         }
 
@@ -251,20 +225,176 @@ object McpClientHub {
         if (sep <= 0) return null
         val serverPart = rest.substring(0, sep)
         val toolPart = rest.substring(sep + 2)
+        val isReaAlias = serverPart.equals("rea_mcp", ignoreCase = true) || serverPart.equals("rea", ignoreCase = true)
         val conn = listConnectors().firstOrNull {
-            it.id.replace('-', '_').equals(serverPart, ignoreCase = true)
+            it.id.replace('-', '_').equals(serverPart, ignoreCase = true) ||
+                (isReaAlias && (it.id == "rea_mcp" || it.id == "rea"))
         } ?: return serverPart to toolPart
         val matchedTool = conn.cachedTools.firstOrNull {
             it.name.replace('-', '_').equals(toolPart, ignoreCase = true)
-        }
+        } ?: if (conn.id == "rea_mcp" || conn.id == "rea") {
+            ReaMcpToolsCatalog.buildDefaultReaTools(conn.id).firstOrNull {
+                it.name.replace('-', '_').equals(toolPart, ignoreCase = true)
+            }
+        } else null
         return conn.id to (matchedTool?.name ?: toolPart)
     }
+
+    /**
+     * Searches across all enabled MCP connectors' cached tools (plus the full 205-tool REA catalog)
+     * by keyword and optional category/server filter so the AI Agent can dynamically discover and
+     * invoke the exact MCP tool needed for the project.
+     */
+    fun searchMcpTools(
+        query: String = "",
+        serverFilter: String = "",
+        categoryFilter: String = "",
+        maxResults: Int = 35
+    ): List<McpRemoteTool> {
+        ensureSeeded()
+        val q = query.trim().lowercase()
+        val srv = serverFilter.trim().lowercase()
+        val cat = categoryFilter.trim().lowercase()
+
+        val allTools = mutableListOf<McpRemoteTool>()
+        val seen = mutableSetOf<String>()
+        for (conn in listConnectors()) {
+            if (!conn.enabled) continue
+            if (srv.isNotEmpty() && !conn.id.lowercase().contains(srv) && !conn.name.lowercase().contains(srv)) {
+                continue
+            }
+            val sourceTools = if ((conn.id == "rea_mcp" || conn.id == "rea") && conn.cachedTools.size < ReaMcpToolsCatalog.TOTAL_TOOLS_COUNT) {
+                ReaMcpToolsCatalog.buildDefaultReaTools(conn.id)
+            } else {
+                conn.cachedTools
+            }
+            for (t in sourceTools) {
+                if (t.name.contains("_adb_") || t.name.endsWith("_adb")) continue
+                if (seen.add("${t.serverId}:${t.name}")) {
+                    allTools.add(t)
+                }
+            }
+        }
+
+        if (q.isEmpty() && cat.isEmpty()) {
+            return allTools.take(maxResults)
+        }
+
+        val terms = q.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        return allTools.mapNotNull { tool ->
+            val descLower = tool.description.lowercase()
+            val nameLower = tool.name.lowercase()
+            if (cat.isNotEmpty() && !descLower.contains("[$cat") && !descLower.contains(cat)) {
+                return@mapNotNull null
+            }
+            if (terms.isEmpty()) return@mapNotNull tool to 10
+            var score = 0
+            for (term in terms) {
+                when {
+                    nameLower == term -> score += 100
+                    nameLower.startsWith(term) -> score += 50
+                    nameLower.contains(term) -> score += 30
+                    descLower.contains(term) -> score += 15
+                    tool.parameters.any { it.name.lowercase().contains(term) || it.description.lowercase().contains(term) } -> score += 8
+                }
+            }
+            if (score > 0) tool to score else null
+        }
+            .sortedByDescending { it.second }
+            .map { it.first }
+            .take(maxResults)
+    }
+
+    /**
+     * Formats MCP tool search results into a detailed, human- & LLM-readable Markdown report
+     * with categories, qualified names (`mcp__rea_mcp__<tool>`), descriptions, and parameter schemas.
+     */
+    fun formatSearchMcpToolsReport(
+        query: String = "",
+        category: String = "",
+        serverId: String = "",
+        maxResults: Int = 25
+    ): String {
+        val matched = searchMcpTools(
+            query = query,
+            serverFilter = serverId,
+            categoryFilter = category,
+            maxResults = maxResults
+        )
+        return buildString {
+            appendLine("=== 🔍 HASIL PENCARIAN MCP TOOLS (Non-ADB | Total Katalog REA: ${ReaMcpToolsCatalog.TOTAL_TOOLS_COUNT} tools) ===")
+            if (query.isNotBlank() || category.isNotBlank() || serverId.isNotBlank()) {
+                appendLine("Filter -> query='${query.ifBlank { "*" }}', category='${category.ifBlank { "*" }}', server='${serverId.ifBlank { "*" }}'")
+            } else {
+                val cats = ReaMcpToolsCatalog.listCategories().joinToString(", ") { "${it.first} (${it.second})" }
+                appendLine("Kategori REA (${ReaMcpToolsCatalog.listCategories().size}): $cats")
+            }
+            if (matched.isEmpty()) {
+                appendLine("Tidak ada tool MCP yang cocok dengan kata kunci tersebut. Coba kata kunci yang lebih umum atau kosongkan 'category'.")
+            } else {
+                appendLine("Menampilkan ${matched.size} tools yang cocok:")
+                for ((idx, t) in matched.withIndex()) {
+                    appendLine("${idx + 1}. `${t.qualifiedName}` (server=`${t.serverId}`, tool=`${t.name}`)")
+                    appendLine("   Deskripsi : ${t.description}")
+                    if (t.parameters.isEmpty()) {
+                        appendLine("   Parameter : (tanpa parameter)")
+                    } else {
+                        val pStr = t.parameters.joinToString(", ") { p ->
+                            "${p.name}: ${p.type}${if (p.required) " (WAJIB)" else " (opsional)"}${if (p.description.isNotBlank()) " — ${p.description.take(90)}" else ""}"
+                        }
+                        appendLine("   Parameter : $pStr")
+                    }
+                }
+                appendLine("\nCara Memanggil:")
+                appendLine("- Panggil langsung via tool `${matched.first().qualifiedName}` atau")
+                appendLine("- `call_mcp_tool(server_id=\"${matched.first().serverId}\", tool_name=\"${matched.first().name}\", arguments_json=\"{...}\")`")
+            }
+        }.trim()
+    }
+
+    /**
+     * Core high-frequency REA tools exposed directly in the LLM tool declarations (while all 205
+     * REA tools remain searchable via `search_mcp_tools` and directly callable via `mcp__rea_mcp__<tool>`
+     * or `call_mcp_tool` without overflowing provider tool-count limits).
+     */
+    private val coreDirectReaToolNames = setOf(
+        "inspect_android_package",
+        "search_android_classes",
+        "inspect_android_class",
+        "inspect_android_method",
+        "trace_android_references",
+        "decode_android_resources",
+        "inspect_apk_signature",
+        "project_android_application_graph",
+        "open_bundle_resources",
+        "binary_overview",
+        "inspect_artifact",
+        "extract_artifact",
+        "list_strings",
+        "search_strings",
+        "list_procedures",
+        "search_procedures",
+        "decompile_all",
+        "analyze_function",
+        "inspect_sqlite_database",
+        "identify_flutter_build",
+        "inspect_dart_aot",
+        "inspect_il2cpp_metadata",
+        "execute_rizin_command",
+        "inspect_with_objdump"
+    )
 
     fun getDynamicToolDefinitions(): List<ToolDefinition> {
         val out = mutableListOf<ToolDefinition>()
         for (conn in listConnectors()) {
             if (!conn.enabled) continue
-            for (rt in conn.cachedTools) {
+            val toolsToExpose = if (conn.cachedTools.size > 40 && (conn.id == "rea_mcp" || conn.id == "rea")) {
+                conn.cachedTools.filter { it.name in coreDirectReaToolNames }
+            } else {
+                conn.cachedTools.take(40)
+            }
+            for (rt in toolsToExpose) {
+                if (rt.name.contains("_adb_") || rt.name.endsWith("_adb")) continue
                 out.add(
                     ToolDefinition(
                         name = rt.qualifiedName,
@@ -282,12 +412,21 @@ object McpClientHub {
         val enabled = listConnectors().filter { it.enabled }
         if (enabled.isEmpty()) return ""
         return buildString {
-            appendLine("=== KONEKTOR MCP AKTIF (${enabled.size}) ===")
+            appendLine("=== KONEKTOR MCP AKTIF (${enabled.size}) & KATALOG 205 TOOLS REA ===")
             for (c in enabled) {
-                val toolNames = c.cachedTools.joinToString(", ") { it.name }.ifEmpty { "(panggil manage_mcp_connectors action='sync' untuk memuat daftar tool)" }
-                appendLine("- `${c.id}` (${c.name} | transport=${c.transport} | status=${c.lastStatus}): $toolNames")
+                if (c.id == "rea_mcp" || c.id == "rea") {
+                    val cats = ReaMcpToolsCatalog.listCategories().joinToString(", ") { "${it.first} (${it.second})" }
+                    appendLine("- `${c.id}` (${c.name} | transport=${c.transport} | status=${c.lastStatus}):")
+                    appendLine("  • Total ${c.cachedTools.size} tools aktif (seluruh tool ADB telah dihapus karena berjalan langsung di Android).")
+                    appendLine("  • Kategori REA: $cats")
+                    appendLine("  • PENTING: Gunakan `search_mcp_tools(query=\"...\", category=\"...\")` untuk mencari nama & skema parameter dari 205 tool REA sesuai kebutuhan proyek, lalu panggil langsung via `mcp__rea_mcp__<nama_tool>` atau `call_mcp_tool(server_id=\"${c.id}\", tool_name=\"<nama_tool>\", arguments_json=\"...\")`!")
+                } else {
+                    val toolNames = c.cachedTools.take(25).joinToString(", ") { it.name }.ifEmpty { "(panggil manage_mcp_connectors action='sync' untuk memuat daftar tool)" }
+                    val more = if (c.cachedTools.size > 25) " ... (+${c.cachedTools.size - 25} lainnya, gunakan search_mcp_tools)" else ""
+                    appendLine("- `${c.id}` (${c.name} | transport=${c.transport} | status=${c.lastStatus}): $toolNames$more")
+                }
             }
-            appendLine("Anda dapat memanggil tool MCP secara langsung menggunakan nama `mcp__<server>__<tool>` atau melalui `call_mcp_tool(server_id=\"...\", tool_name=\"...\", arguments_json=\"...\")`.")
+            appendLine("Anda wajib mencari tool yang paling tepat menggunakan `search_mcp_tools` dan memakainya sesuai kebutuhan analisis/pembangunan proyek.")
         }.trim()
     }
 
@@ -313,6 +452,8 @@ object McpClientHub {
             val obj = el.asJsonObject
             val name = obj.get("name")?.asString?.trim().orEmpty()
             if (name.isEmpty()) continue
+            // Strip any *_adb_* tools because ADB is not useful on-device on Android
+            if (name.lowercase().contains("_adb_") || name.lowercase().startsWith("adb_")) continue
             val desc = obj.get("description")?.asString?.trim().orEmpty()
             val schema = obj.get("inputSchema")?.takeIf { it.isJsonObject }?.asJsonObject
             val params = parseInputSchema(schema)
@@ -787,163 +928,19 @@ object McpClientHub {
             )
         }
 
-        // 2. Write the built-in REA (Reverse Engineer Anything & APK Reconstruction) MCP Server script
-        val reaScript = File(mcpScriptsDir(), "rea_mcp_server.py")
-        if (!reaScript.exists()) {
-            reaScript.writeText(
-                """
-                #!/usr/bin/env python3
-                import sys, json, os, zipfile, struct, re
-
-                TOOLS = [
-                    {
-                        "name": "rea_inspect_apk",
-                        "description": "Deep reverse-engineering inspection of an APK or JAR/DEX archive: lists manifest strings, layout XML files, drawables, assets, native .so libraries, and DEX class/method counts.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "apk_path": {"type": "string", "description": "Absolute path to the .apk or .jar file"}
-                            },
-                            "required": ["apk_path"]
-                        }
-                    },
-                    {
-                        "name": "rea_decode_xml",
-                        "description": "Decompile binary Android XML (AndroidManifest.xml or res/layout/*.xml) from an APK into human-readable XML.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "apk_path": {"type": "string", "description": "Path to .apk file"},
-                                "xml_entry": {"type": "string", "description": "Entry inside APK, e.g. 'AndroidManifest.xml' or 'res/layout/activity_main.xml'"}
-                            },
-                            "required": ["apk_path", "xml_entry"]
-                        }
-                    },
-                    {
-                        "name": "rea_analyze_dex",
-                        "description": "Analyze classes*.dex inside an APK to extract package classes, methods, fields, and hardcoded URLs/endpoints.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "apk_path": {"type": "string", "description": "Path to .apk file"},
-                                "query": {"type": "string", "description": "Optional filter keyword for class/method/string names"}
-                            },
-                            "required": ["apk_path"]
-                        }
-                    },
-                    {
-                        "name": "rea_extract_apk_workspace",
-                        "description": "Unpack APK resources, assets, drawables, and DEX files into a target directory for reverse-engineering or cloning.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "apk_path": {"type": "string", "description": "Path to .apk file"},
-                                "output_dir": {"type": "string", "description": "Destination directory to extract into"}
-                            },
-                            "required": ["apk_path", "output_dir"]
-                        }
-                    }
-                ]
-
-                def handle_call(name, args):
-                    apk_path = args.get("apk_path", "")
-                    if not os.path.isfile(apk_path):
-                        return f"Error: File not found: {apk_path}"
-                    if name == "rea_inspect_apk":
-                        with zipfile.ZipFile(apk_path, "r") as z:
-                            names = z.namelist()
-                            layouts = [n for n in names if n.startswith("res/layout") and n.endswith(".xml")]
-                            drawables = [n for n in names if (n.startswith("res/drawable") or n.startswith("res/mipmap")) and not n.endswith("/")]
-                            assets = [n for n in names if n.startswith("assets/") and not n.endswith("/")]
-                            dexes = [n for n in names if re.match(r"classes\d*\.dex$", n)]
-                            libs = [n for n in names if n.startswith("lib/") and n.endswith(".so")]
-                            return json.dumps({
-                                "apk_path": apk_path,
-                                "size_bytes": os.path.getsize(apk_path),
-                                "total_entries": len(names),
-                                "dex_files": dexes,
-                                "layouts_count": len(layouts),
-                                "layouts": layouts[:50],
-                                "drawables_count": len(drawables),
-                                "drawables_sample": drawables[:40],
-                                "assets": assets[:40],
-                                "native_libs": libs[:30]
-                            }, indent=2)
-                    elif name == "rea_extract_apk_workspace":
-                        out_dir = args.get("output_dir", "/tmp/rea_unpacked")
-                        os.makedirs(out_dir, exist_ok=True)
-                        with zipfile.ZipFile(apk_path, "r") as z:
-                            z.extractall(out_dir)
-                        return f"Extracted {apk_path} into {out_dir}"
-                    return f"Executed {name} on {apk_path}"
-
-                for line in sys.stdin:
-                    line = line.strip()
-                    if not line: continue
-                    try:
-                        req = json.loads(line)
-                    except Exception:
-                        continue
-                    req_id = req.get("id")
-                    method = req.get("method", "")
-                    if req_id is None: continue
-                    if method == "initialize":
-                        res = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "rea-mcp-server", "version": "2.0.0"}}
-                        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": res}), flush=True)
-                    elif method == "tools/list":
-                        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"tools": TOOLS}}), flush=True)
-                    elif method == "tools/call":
-                        params = req.get("params", {})
-                        try:
-                            text = handle_call(params.get("name"), params.get("arguments", {}))
-                            print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": text}], "isError": False}}), flush=True)
-                        except Exception as e:
-                            print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": str(e)}], "isError": True}}), flush=True)
-                    else:
-                        print(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {}}), flush=True)
-                """.trimIndent() + "\n"
-            )
+        // 2. Write the built-in REA (Reverse Engineer Anything & APK Reconstruction) 205-Tool MCP Server script (Non-ADB)
+        val reaToolsJsonFile = File(mcpScriptsDir(), "rea_mcp_tools.json")
+        if (!reaToolsJsonFile.exists() || reaToolsJsonFile.length() < 10_000L) {
+            reaToolsJsonFile.writeText(gson.toJson(ReaMcpToolsCatalog.buildToolsJsonArray("rea_mcp")))
         }
+        val reaScript = File(mcpScriptsDir(), "rea_mcp_server.py")
+        reaScript.writeText(ReaMcpToolsCatalog.buildReaServerPythonScript(reaToolsJsonFile.absolutePath))
 
-        val reaTools = listOf(
-            McpRemoteTool(
-                serverId = "rea_mcp",
-                name = "rea_inspect_apk",
-                description = "Deep reverse-engineering inspection of an APK/JAR/DEX archive (manifest, layouts, drawables, assets, native libs, DEX classes).",
-                parameters = listOf(ToolParameterProperty("apk_path", "string", "Absolute path to .apk file", required = true))
-            ),
-            McpRemoteTool(
-                serverId = "rea_mcp",
-                name = "rea_decode_xml",
-                description = "Decompile binary Android XML (AndroidManifest.xml or res/layout/*.xml) from an APK into human-readable XML.",
-                parameters = listOf(
-                    ToolParameterProperty("apk_path", "string", "Absolute path to .apk file", required = true),
-                    ToolParameterProperty("xml_entry", "string", "Entry path such as 'AndroidManifest.xml' or 'res/layout/activity_main.xml'", required = true)
-                )
-            ),
-            McpRemoteTool(
-                serverId = "rea_mcp",
-                name = "rea_analyze_dex",
-                description = "Analyze classes*.dex inside an APK to list packages, classes, methods, fields, and hardcoded URLs/endpoints.",
-                parameters = listOf(
-                    ToolParameterProperty("apk_path", "string", "Absolute path to .apk file", required = true),
-                    ToolParameterProperty("query", "string", "Optional keyword filter for class/method/string names", required = false)
-                )
-            ),
-            McpRemoteTool(
-                serverId = "rea_mcp",
-                name = "rea_extract_apk_workspace",
-                description = "Unpack APK resources, assets, drawables, and DEX files into a workspace directory.",
-                parameters = listOf(
-                    ToolParameterProperty("apk_path", "string", "Absolute path to .apk file", required = true),
-                    ToolParameterProperty("output_dir", "string", "Destination directory to extract into", required = true)
-                )
-            )
-        )
+        val reaTools = ReaMcpToolsCatalog.buildDefaultReaTools("rea_mcp")
 
         val reaConnector = McpConnectorConfig(
             id = "rea_mcp",
-            name = "REA — Reverse Engineer Anything & APK Cloner MCP",
+            name = "REA — Reverse Engineer Anything & APK Cloner MCP (${ReaMcpToolsCatalog.TOTAL_TOOLS_COUNT} Tools)",
             transport = "stdio",
             command = "python3 ${reaScript.absolutePath}",
             inLinux = true,
@@ -951,20 +948,51 @@ object McpClientHub {
             enabled = true,
             source = "builtin",
             cachedTools = reaTools,
-            lastStatus = "Siap (4 REA tools)"
+            lastStatus = "Siap (${ReaMcpToolsCatalog.TOTAL_TOOLS_COUNT} REA tools, Non-ADB)"
         )
 
         if (configFile().isFile) {
-            // Ensure existing installations automatically receive rea_mcp if not yet present
+            // Ensure existing installations automatically upgrade rea_mcp to the 205-tool Non-ADB catalog
             try {
                 val raw = configFile().readText()
-                val arr = JsonParser.parseString(raw).asJsonArray
-                val existing = arr.mapNotNull { el ->
-                    if (el.isJsonObject) parseConnector(el.asJsonObject) else null
-                }.toMutableList()
-                if (existing.none { it.id == "rea_mcp" }) {
-                    existing.add(0, reaConnector)
-                    saveConnectors(existing)
+                val parsed = JsonParser.parseString(raw)
+                val arr = when {
+                    parsed.isJsonObject -> parsed.asJsonObject.getAsJsonArray("connectors")
+                    parsed.isJsonArray -> parsed.asJsonArray
+                    else -> null
+                }
+                if (arr != null) {
+                    val existing = arr.mapNotNull { el ->
+                        if (el.isJsonObject) parseConnector(el.asJsonObject) else null
+                    }.toMutableList()
+                    var changed = false
+
+                    // Strip any legacy *_adb_* tools from all connectors
+                    for (i in existing.indices) {
+                        val conn = existing[i]
+                        val filteredTools = conn.cachedTools.filterNot {
+                            it.name.lowercase().contains("_adb_") || it.name.lowercase().startsWith("adb_")
+                        }
+                        if (filteredTools.size != conn.cachedTools.size) {
+                            existing[i] = conn.copy(cachedTools = filteredTools)
+                            changed = true
+                        }
+                    }
+
+                    val reaIndex = existing.indexOfFirst { it.id == "rea_mcp" || it.id == "rea" }
+                    if (reaIndex < 0) {
+                        existing.add(0, reaConnector)
+                        changed = true
+                    } else {
+                        val cur = existing[reaIndex]
+                        if (cur.cachedTools.size != reaTools.size || cur.id != "rea_mcp") {
+                            existing[reaIndex] = reaConnector.copy(enabled = cur.enabled)
+                            changed = true
+                        }
+                    }
+                    if (changed) {
+                        saveConnectors(existing)
+                    }
                 }
             } catch (_: Throwable) {
             }

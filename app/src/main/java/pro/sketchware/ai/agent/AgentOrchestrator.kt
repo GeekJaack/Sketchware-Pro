@@ -20,9 +20,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 object AgentOrchestrator {
 
     interface Listener {
-        fun onChatEntryAdded(scId: String, entry: AgentChatEntry)
-        fun onPlanUpdated(scId: String, plan: AgentPlan)
-        fun onStatusChanged(scId: String, isRunning: Boolean, statusText: String, step: Int, maxSteps: Int)
+        fun onChatEntryAdded(scId: String, sessionId: String, entry: AgentChatEntry) {}
+        fun onPlanUpdated(scId: String, sessionId: String, plan: AgentPlan) {}
+        fun onStatusChanged(scId: String, sessionId: String, isRunning: Boolean, statusText: String, step: Int, maxSteps: Int) {}
+        fun onSessionListChanged(scId: String) {}
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -31,6 +32,14 @@ object AgentOrchestrator {
 
     @Volatile
     var isRunning: Boolean = false
+        private set
+
+    @Volatile
+    var runningScId: String? = null
+        private set
+
+    @Volatile
+    var runningSessionId: String? = null
         private set
 
     @Volatile
@@ -57,6 +66,10 @@ object AgentOrchestrator {
         listeners.remove(listener)
     }
 
+    fun isSessionRunning(scId: String, sessionId: String): Boolean {
+        return isRunning && runningScId == scId && runningSessionId == sessionId
+    }
+
     fun cancelRun() {
         if (isRunning) {
             cancelRequested.set(true)
@@ -64,15 +77,26 @@ object AgentOrchestrator {
         }
     }
 
-    fun notifyExternalChatEntry(scId: String, entry: AgentChatEntry) {
-        dispatchEntry(scId, entry)
+    fun notifyExternalChatEntry(scId: String, entry: AgentChatEntry, sessionId: String? = null) {
+        val targetSessionId = AgentMemoryStore.resolveSessionId(scId, sessionId)
+        dispatchEntry(scId, targetSessionId, entry)
     }
 
+    fun notifySessionListChanged(scId: String) {
+        mainHandler.post {
+            for (l in listeners) {
+                l.onSessionListChanged(scId)
+            }
+        }
+    }
+
+    @JvmOverloads
     fun startUserTask(
         context: Context,
         scId: String,
         userPrompt: String,
-        activeScreenName: String? = null
+        activeScreenName: String? = null,
+        sessionId: String = AgentMemoryStore.getActiveSessionId(scId)
     ) {
         if (isRunning) return
         val appCtx = context.applicationContext
@@ -83,30 +107,97 @@ object AgentOrchestrator {
         currentMaxSteps = maxSteps
         currentStep = 0
         isRunning = true
+        runningScId = scId
+        runningSessionId = sessionId
         cancelRequested.set(false)
 
         // Start foreground service so long-horizon tasks survive backgrounding
         AgentForegroundService.start(appCtx, scId, "Memulai AI Agent (Unlimited Long-Horizon)...")
 
+        val userEntryId = UUID.randomUUID().toString()
         val userEntry = AgentChatEntry(
-            id = UUID.randomUUID().toString(),
+            id = userEntryId,
             type = ChatEntryType.USER,
             title = "Anda (${config.autonomyMode.title})",
             body = userPrompt
         )
-        AgentMemoryStore.appendChatEntry(scId, userEntry)
-        dispatchEntry(scId, userEntry)
-        dispatchStatus(scId, true, "Menganalisis proyek & merencanakan langkah...", 1, maxSteps)
+        AgentMemoryStore.appendChatEntry(scId, userEntry, sessionId = sessionId)
+        dispatchEntry(scId, sessionId, userEntry)
+        notifySessionListChanged(scId)
+        dispatchStatus(scId, sessionId, true, "Menganalisis proyek & merencanakan langkah...", 1, maxSteps)
 
         executor.execute {
-            runLoop(appCtx, config, scId, userPrompt, activeScreenName, maxSteps, unlimited)
+            AgentMemoryStore.withExecutionSession(scId, sessionId) {
+                runLoop(appCtx, config, scId, sessionId, userEntryId, userPrompt, activeScreenName, maxSteps, unlimited)
+            }
         }
+    }
+
+    /**
+     * Edits a previous [ChatEntryType.USER] entry (or the last one), optionally restores its
+     * `before_ai_task` checkpoint if requested, truncates from that entry, and resubmits [newPrompt].
+     */
+    fun editAndResubmitUserTurn(
+        context: Context,
+        scId: String,
+        sessionId: String,
+        targetUserEntryId: String,
+        newPrompt: String,
+        restoreCheckpointFirst: Boolean = false,
+        activeScreenName: String? = null
+    ): Boolean {
+        if (isRunning) return false
+        val entries = AgentMemoryStore.loadChatEntries(scId, sessionId)
+        val target = entries.firstOrNull { it.id == targetUserEntryId && it.type == ChatEntryType.USER } ?: return false
+        if (restoreCheckpointFirst && !target.checkpointPath.isNullOrBlank()) {
+            try {
+                val cpId = java.io.File(target.checkpointPath).name
+                ProjectGateway.restoreCheckpoint(scId, cpId)
+                ProjectGateway.notifyUiChanged(scId, activeScreenName)
+            } catch (_: Throwable) {
+            }
+        }
+        AgentMemoryStore.truncateSessionFromEntry(scId, sessionId, targetUserEntryId, inclusive = true)
+        notifySessionListChanged(scId)
+        startUserTask(context, scId, newPrompt, activeScreenName, sessionId)
+        return true
+    }
+
+    /**
+     * Regenerates the assistant turn corresponding to [targetEntryId] (either an ASSISTANT entry
+     * or a USER entry) by finding the preceding USER entry, truncating everything from that USER
+     * entry onward, and re-running the prompt.
+     */
+    fun regenerateFromEntry(
+        context: Context,
+        scId: String,
+        sessionId: String,
+        targetEntryId: String,
+        restoreCheckpointFirst: Boolean = false,
+        activeScreenName: String? = null
+    ): Boolean {
+        if (isRunning) return false
+        val entries = AgentMemoryStore.loadChatEntries(scId, sessionId)
+        val idx = entries.indexOfFirst { it.id == targetEntryId }
+        if (idx < 0) return false
+        val userEntry = (idx downTo 0).map { entries[it] }.firstOrNull { it.type == ChatEntryType.USER } ?: return false
+        return editAndResubmitUserTurn(
+            context = context,
+            scId = scId,
+            sessionId = sessionId,
+            targetUserEntryId = userEntry.id,
+            newPrompt = userEntry.body,
+            restoreCheckpointFirst = restoreCheckpointFirst,
+            activeScreenName = activeScreenName
+        )
     }
 
     private fun runLoop(
         appCtx: Context,
         config: AiConfigManager,
         scId: String,
+        sessionId: String,
+        userEntryId: String,
         userPrompt: String,
         activeScreenName: String?,
         maxSteps: Int,
@@ -119,14 +210,19 @@ object AgentOrchestrator {
             if (mode.allowsWriteTools && config.autoBackupBeforeRun) {
                 try {
                     val cpPath = ProjectGateway.createCheckpoint(scId, "before_ai_task")
+                    // Attach the checkpoint path directly onto the USER entry so Undo/Restore knows the exact snapshot
+                    AgentMemoryStore.updateChatEntry(scId, sessionId, userEntryId) {
+                        it.copy(checkpointPath = cpPath)
+                    }
                     val cpEntry = AgentChatEntry(
                         id = UUID.randomUUID().toString(),
                         type = ChatEntryType.STATUS,
                         title = "Auto-Checkpoint Dibuat",
-                        body = "Snapshot proyek tersimpan di: $cpPath"
+                        body = "Snapshot proyek tersimpan di: $cpPath",
+                        checkpointPath = cpPath
                     )
-                    AgentMemoryStore.appendChatEntry(scId, cpEntry)
-                    dispatchEntry(scId, cpEntry)
+                    AgentMemoryStore.appendChatEntry(scId, cpEntry, sessionId = sessionId)
+                    dispatchEntry(scId, sessionId, cpEntry)
                 } catch (_: Throwable) {
                 }
             }
@@ -134,9 +230,9 @@ object AgentOrchestrator {
             val llmClient = LlmClient(config)
             val tools = SketchwareToolRegistry.getToolsForMode(mode)
 
-            // Seed conversation history from recent chat entries so follow-up prompts have context
+            // Seed conversation history from recent chat entries in THIS session so follow-up prompts have context
             val turnMessages = mutableListOf<LlmTurnMessage>()
-            val recentEntries = AgentMemoryStore.loadChatEntries(scId)
+            val recentEntries = AgentMemoryStore.loadChatEntries(scId, sessionId)
                 .filter { it.type == ChatEntryType.USER || it.type == ChatEntryType.ASSISTANT }
                 .dropLast(1) // Drop the current userEntry we just added
                 .takeLast(6)
@@ -171,9 +267,9 @@ object AgentOrchestrator {
             while ((unlimited || step <= maxSteps) && !cancelRequested.get()) {
                 currentStep = step
                 val prefix = stepPrefix(step, continuationEpoch)
-                dispatchStatus(scId, true, "$prefix: Berpikir (${config.getModelId()})...", step, maxSteps)
+                dispatchStatus(scId, sessionId, true, "$prefix: Berpikir (${config.getModelId()})...", step, maxSteps)
 
-                val systemPrompt = buildSystemPrompt(scId, mode, activeScreenName, config.autoBuildAndHeal, config.agentLanguage)
+                val systemPrompt = buildSystemPrompt(scId, sessionId, mode, activeScreenName, config.autoBuildAndHeal, config.agentLanguage)
                 val compactedMessages = compactTurnMessages(turnMessages, aggressive = false)
 
                 val response = llmClient.generateTurn(
@@ -186,15 +282,15 @@ object AgentOrchestrator {
                     },
                     onRetry = { attempt, maxAttempts, reason ->
                         val retryMsg = "$prefix: $reason — Mencoba ulang ($attempt/$maxAttempts)..."
-                        dispatchStatus(scId, true, retryMsg, step, maxSteps)
+                        dispatchStatus(scId, sessionId, true, retryMsg, step, maxSteps)
                         val retryEntry = AgentChatEntry(
                             id = UUID.randomUUID().toString(),
                             type = ChatEntryType.STATUS,
                             title = "Auto-Retry Langkah $step ($attempt/$maxAttempts)",
                             body = "Terdeteksi gangguan sementara: $reason. Memadatkan konteks lama & mencoba kembali secara otomatis..."
                         )
-                        AgentMemoryStore.appendChatEntry(scId, retryEntry)
-                        dispatchEntry(scId, retryEntry)
+                        AgentMemoryStore.appendChatEntry(scId, retryEntry, sessionId = sessionId)
+                        dispatchEntry(scId, sessionId, retryEntry)
                     }
                 )
 
@@ -207,13 +303,14 @@ object AgentOrchestrator {
                         title = if (unlimited) "AI Agent (Step $step · ∞)" else "AI Agent (Step $step)",
                         body = response.text
                     )
-                    AgentMemoryStore.appendChatEntry(scId, assistantEntry)
-                    dispatchEntry(scId, assistantEntry)
+                    AgentMemoryStore.appendChatEntry(scId, assistantEntry, sessionId = sessionId)
+                    dispatchEntry(scId, sessionId, assistantEntry)
+                    notifySessionListChanged(scId)
                 }
 
                 if (response.toolCalls.isEmpty()) {
                     // 1. Premature-Stop Harness Guard: if tasks in Long-Horizon Plan are still PENDING or IN_PROGRESS, keep working until finish!
-                    val currentPlan = AgentMemoryStore.loadPlan(scId)
+                    val currentPlan = AgentMemoryStore.loadPlan(scId, sessionId)
                     val unfinished = currentPlan.tasks.filter {
                         it.status == TaskStatus.PENDING || it.status == TaskStatus.IN_PROGRESS
                     }
@@ -268,9 +365,9 @@ object AgentOrchestrator {
                         title = "Tool Call: ${tc.name}",
                         body = tc.arguments.toString()
                     )
-                    AgentMemoryStore.appendChatEntry(scId, callEntry)
-                    dispatchEntry(scId, callEntry)
-                    dispatchStatus(scId, true, "$prefix: Menjalankan ${tc.name}...", step, maxSteps)
+                    AgentMemoryStore.appendChatEntry(scId, callEntry, sessionId = sessionId)
+                    dispatchEntry(scId, sessionId, callEntry)
+                    dispatchStatus(scId, sessionId, true, "$prefix: Menjalankan ${tc.name}...", step, maxSteps)
 
                     val isMutatingTool = SketchwareToolRegistry.isWriteTool(tc.name) ||
                         (tc.name == "reconstruct_apk_project" && tc.arguments.get("action")?.asString.equals("full_clone", ignoreCase = true))
@@ -289,12 +386,12 @@ object AgentOrchestrator {
                             toolName = tc.name,
                             args = tc.arguments
                         ) { progressMsg ->
-                            dispatchStatus(scId, true, "$prefix: $progressMsg", step, maxSteps)
+                            dispatchStatus(scId, sessionId, true, "$prefix: $progressMsg", step, maxSteps)
                         }
                     }
 
                     if (tc.name == "update_long_horizon_plan") {
-                        dispatchPlan(scId, AgentMemoryStore.loadPlan(scId))
+                        dispatchPlan(scId, sessionId, AgentMemoryStore.loadPlan(scId, sessionId))
                     }
                     if (tc.name == "save_and_verify_compile" && toolOutput.startsWith("BUILD SUKSES!")) {
                         buildVerifiedInThisRun = true
@@ -311,8 +408,8 @@ object AgentOrchestrator {
                         title = "Result: ${tc.name}",
                         body = truncatedUiOutput
                     )
-                    AgentMemoryStore.appendChatEntry(scId, resultEntry)
-                    dispatchEntry(scId, resultEntry)
+                    AgentMemoryStore.appendChatEntry(scId, resultEntry, sessionId = sessionId)
+                    dispatchEntry(scId, sessionId, resultEntry)
 
                     turnMessages.add(
                         LlmTurnMessage(
@@ -339,7 +436,7 @@ object AgentOrchestrator {
                 // Every ~18 tool steps (turnMessages.size >= 38), roll over older tool turns so the LLM context stays lean & fast forever!
                 if (unlimited && turnMessages.size >= 38 && !cancelRequested.get()) {
                     continuationEpoch++
-                    val currentPlan = AgentMemoryStore.loadPlan(scId)
+                    val currentPlan = AgentMemoryStore.loadPlan(scId, sessionId)
                     val unfinished = currentPlan.tasks.filter {
                         it.status == TaskStatus.PENDING || it.status == TaskStatus.IN_PROGRESS
                     }
@@ -360,7 +457,7 @@ Ringkasan Proyek terbaru, Long-Horizon Plan (plan.json), dan Working Memory (mem
                         turnMessages.addAll(tailMessages.subList(firstAssistantIdx, tailMessages.size))
                     }
                 } else if (!unlimited && step > maxSteps && !cancelRequested.get() && mode.allowsWriteTools && continuationEpoch < maxContinuationEpochs) {
-                    val currentPlan = AgentMemoryStore.loadPlan(scId)
+                    val currentPlan = AgentMemoryStore.loadPlan(scId, sessionId)
                     val unfinished = currentPlan.tasks.filter {
                         it.status == TaskStatus.PENDING || it.status == TaskStatus.IN_PROGRESS
                     }
@@ -373,8 +470,8 @@ Ringkasan Proyek terbaru, Long-Horizon Plan (plan.json), dan Working Memory (mem
                             title = "🔄 Harness Auto-Continuation (Sesi $continuationEpoch/$maxContinuationEpochs)",
                             body = "Meriset jendela konteks (Fresh Episodic Handoff) agar tetap ringan dan otomatis melanjutkan milestone yang tersisa (${unfinished.size} task belum selesai)..."
                         )
-                        AgentMemoryStore.appendChatEntry(scId, handoffEntry)
-                        dispatchEntry(scId, handoffEntry)
+                        AgentMemoryStore.appendChatEntry(scId, handoffEntry, sessionId = sessionId)
+                        dispatchEntry(scId, sessionId, handoffEntry)
 
                         turnMessages.clear()
                         turnMessages.add(
@@ -396,8 +493,8 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
                     title = "Dihentikan",
                     body = "Eksekusi AI Agent dihentikan oleh pengguna."
                 )
-                AgentMemoryStore.appendChatEntry(scId, cancelEntry)
-                dispatchEntry(scId, cancelEntry)
+                AgentMemoryStore.appendChatEntry(scId, cancelEntry, sessionId = sessionId)
+                dispatchEntry(scId, sessionId, cancelEntry)
             } else if (!unlimited && step > maxSteps) {
                 val limitEntry = AgentChatEntry(
                     id = UUID.randomUUID().toString(),
@@ -405,8 +502,8 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
                     title = "Batas Langkah Tercapai ($maxSteps steps x $continuationEpoch sesi)",
                     body = "Ketik 'Lanjutkan' atau aktifkan 'Unlimited Steps' di Pengaturan AI untuk meneruskan eksekusi tanpa batas langkah."
                 )
-                AgentMemoryStore.appendChatEntry(scId, limitEntry)
-                dispatchEntry(scId, limitEntry)
+                AgentMemoryStore.appendChatEntry(scId, limitEntry, sessionId = sessionId)
+                dispatchEntry(scId, sessionId, limitEntry)
             }
         } catch (t: Throwable) {
             val errEntry = AgentChatEntry(
@@ -415,11 +512,14 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
                 title = "Error AI Agent",
                 body = "${t.javaClass.simpleName}: ${t.message}\n\nTip: Ketik 'Lanjutkan' untuk meneruskan pekerjaan dari langkah terakhir di Long-Horizon Plan."
             )
-            AgentMemoryStore.appendChatEntry(scId, errEntry)
-            dispatchEntry(scId, errEntry)
+            AgentMemoryStore.appendChatEntry(scId, errEntry, sessionId = sessionId)
+            dispatchEntry(scId, sessionId, errEntry)
         } finally {
             isRunning = false
-            dispatchStatus(scId, false, "Siap", currentStep, maxSteps)
+            runningScId = null
+            runningSessionId = null
+            notifySessionListChanged(scId)
+            dispatchStatus(scId, sessionId, false, "Siap", currentStep, maxSteps)
             AgentForegroundService.stop(appCtx)
         }
     }
@@ -499,6 +599,7 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
 
     private fun buildSystemPrompt(
         scId: String,
+        sessionId: String,
         mode: AgentAutonomyMode,
         activeScreenName: String?,
         autoBuildAndHeal: Boolean,
@@ -509,8 +610,8 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
         } catch (t: Throwable) {
             "Gagal memuat ringkasan proyek: ${t.message}"
         }
-        val plan = AgentMemoryStore.loadPlan(scId)
-        val memoryNotes = AgentMemoryStore.loadMemoryNotes(scId)
+        val plan = AgentMemoryStore.loadPlan(scId, sessionId)
+        val memoryNotes = AgentMemoryStore.loadMemoryNotes(scId, sessionId)
         val unresolvedCrash = RuntimeLogHarness.getLatestUnresolvedCrash(scId)
 
         val planSummary = if (plan.tasks.isEmpty()) {
@@ -609,17 +710,19 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
                - Gunakan `terminal_read(wait_for_pattern="...", idle_ms=...)` untuk menunggu prompt/hasil tanpa polling berulang; bila hasilnya memuat baris `[prompt] ...`, sesi sedang menunggu input (y/n, password, REPL) sehingga kirim jawaban lewat `terminal_send`. Hentikan sesi dengan `terminal_stop` (alias `terminal_kill`).
                - Guard keamanan memblokir perintah destruktif (hapus rekursif di luar `.sketchware`, `mkfs`, `dd of=/dev/...`). Bila diblokir, perbaiki target ke dalam folder proyek; jangan pernah mengisi `confirm_destructive=true` kecuali pengguna secara eksplisit memintanya.
                - Selalu baca exit code & stderr; bila ada dependensi atau class yang kurang di proyek, cari/unduh atau bangun secara otonom daripada menyerah.
-            8. **Ekosistem Skills (`SKILL.md`), Plugins, & Konektor MCP (`use_skill`, `manage_plugins`, `manage_mcp_connectors`, `call_mcp_tool`)**:
+            8. **Ekosistem Skills (`SKILL.md`), Plugins, & Pencarian Katalog 205 Tools REA MCP (`use_skill`, `manage_plugins`, `search_mcp_tools`, `manage_mcp_connectors`, `call_mcp_tool`)**:
                - Bila tugas relevan dengan salah satu Skill di bawah, panggil `use_skill(action="read", skill_id="...")` sebelum menulis kode. Anda juga dapat membuat skill baru (`action="create"`) atau mengimpor dari URL (`action="install_url"`).
-               - Anda dapat menghubungkan diri ke server MCP eksternal (HTTP/Streamable HTTP maupun proses Stdio di dalam Debian Linux) menggunakan `manage_mcp_connectors` dan memanggil tool-nya secara langsung (`mcp__<server>__<tool>` atau `call_mcp_tool`).
+               - Anda terhubung dengan **Katalog 205 Tools REA MCP (Reverse Engineer Anything — Non-ADB)** di 38 kategori (`Android Tools`, `Android APK`, `APKTool`, `Decompilation`, `Binary Analysis`, `Strings and Data Types`, `SQLite`, `Flutter`, `Frida Instrumentation`, `React Native / Hermes`, `Cryptography`, `Reconstruction`, dll.) serta server MCP eksternal lainnya.
+               - Selalu panggil `search_mcp_tools(query="<kata_kunci>", category="<kategori>")` untuk mencari tool REA/MCP yang paling sesuai dengan kebutuhan proyek, lalu jalankan tool tersebut melalui `mcp__rea_mcp__<nama_tool>` atau `call_mcp_tool(server_id="rea_mcp", tool_name="<nama_tool>", arguments_json="{...}")`.
             9. **DeerFlow 2.0 Sub-Agent Delegation & Workspace Artifacts (`delegate_subagent` & `manage_artifacts`)**:
                - Untuk analisis arsitektur mendalam, audit blok logika lintas layar, atau investigasi error kompilasi tanpa membebani konteks utama, panggil `delegate_subagent(role="researcher"|"ui_architect"|"block_auditor"|"compile_debugger", task="...", target_screens="main,...")`.
                - Gunakan `manage_artifacts(action="write", file_name="...", content="...")` untuk menyimpan dokumen spesifikasi, laporan audit, atau deliverable sehingga pengguna dapat langsung membukanya dari panel **📦 Artifacts** di bagian atas layar chat.
-            10. **🧬 REA (Reverse Engineer Anything) & Full APK Project Cloner (`reconstruct_apk_project` & MCP `rea_mcp`)**:
+            10. **🧬 REA (Reverse Engineer Anything — 205 Non-ADB Tools) & Full APK Project Cloner (`search_mcp_tools`, `reconstruct_apk_project` & MCP `rea_mcp`)**:
                - Ketika pengguna melampirkan file `.apk` (melalui tombol `+ Add Context -> Tambahkan File APK`) atau meminta clone/reverse-engineer APK:
-                 1) Segera panggil `reconstruct_apk_project(action="full_clone", apk_path="...")` untuk mendekode `AndroidManifest.xml` & seluruh binary `res/layout/*.xml`, mengimpor drawables/assets/fonts/permissions, membuat layar Activity & CustomView di proyek Sketchware `#$scId`, serta menghasilkan `rea_clone_blueprint.md` di Artifacts.
-                 2) Panggil `reconstruct_apk_project(action="analyze_dex", apk_path="...", query="...")` dan `reconstruct_apk_project(action="decode_xml", apk_path="...", xml_entry="...")` (atau tool MCP `mcp__rea_mcp__*`) untuk membedah struktur class DEX, method, field, konstanta, SQL, dan endpoint API dari APK sumber.
-                 3) Jangan berhenti hanya pada layout XML! Lanjutkan secara otonom mengimplementasikan seluruh logika bisnis setiap Activity (`write_event_logic`, `add_component`, `write_custom_java_file`), hubungkan navigasi antar layar, dan jalankan `save_and_verify_compile` hingga proyek hasil clone terkompilasi 100% sukses!
+                 1) Gunakan `search_mcp_tools(query="...", category="...")` kapan saja untuk mencari tool analisis spesifik dari 205 tool REA yang dibutuhkan proyek.
+                 2) Segera panggil `reconstruct_apk_project(action="full_clone", apk_path="...")` (atau `mcp__rea_mcp__rea_full_clone_to_sketchware`) untuk mendekode `AndroidManifest.xml` & seluruh binary `res/layout/*.xml`, mengimpor drawables/assets/fonts/permissions, membuat layar Activity & CustomView di proyek Sketchware `#$scId`, serta menghasilkan `rea_clone_blueprint.md` di Artifacts.
+                 3) Panggil `reconstruct_apk_project(action="analyze_dex", apk_path="...", query="...")`, `mcp__rea_mcp__inspect_apk`, `mcp__rea_mcp__run_apktool`, `mcp__rea_mcp__run_jadx`, dan tool REA hasil `search_mcp_tools` untuk membedah struktur class DEX, method, field, konstanta, SQL, dan endpoint API dari APK sumber.
+                 4) Jangan berhenti hanya pada layout XML! Lanjutkan secara otonom mengimplementasikan seluruh logika bisnis setiap Activity (`write_event_logic`, `add_component`, `write_custom_java_file`), hubungkan navigasi antar layar, dan jalankan `save_and_verify_compile` hingga proyek hasil clone terkompilasi 100% sukses!
             11. **♾️ Doktrin Paten: Principal Software Engineer, App Developer & Penguasa Terminal (Unlimited Long-Horizon Hingga Finish)**:
                - Anda memegang kendali penuh sebagai Principal Software Engineer & Android App Developer dengan eksekusi **Unlimited Long-Horizon Steps (`∞`)**.
                - Jangan pernah berhenti setengah jalan atau menyerahkan pekerjaan yang belum selesai kepada pengguna. Kuasai terminal (`run_shell`, `terminal_start`, `terminal_send`, Python 3, Bash, curl, git, sqlite3, unzip) dan seluruh tool Sketchware untuk menyelesaikan setiap masalah secara mandiri sampai seluruh task di `plan.json` berstatus `COMPLETED` dan `save_and_verify_compile` menghasilkan `BUILD SUKSES!`.
@@ -641,41 +744,42 @@ Fokus selesaikan task yang masih berstatus IN_PROGRESS atau PENDING (${unfinishe
         isError: Boolean
     ) {
         if (scId.isBlank()) return
+        val sessionId = AgentMemoryStore.resolveSessionId(scId)
         val entry = AgentChatEntry(
             id = UUID.randomUUID().toString(),
             type = if (isError) ChatEntryType.ERROR else ChatEntryType.TOOL_RESULT,
             title = "🌐 [$agentName] $toolName — $summary",
             body = output.take(1500)
         )
-        AgentMemoryStore.appendChatEntry(scId, entry)
-        dispatchEntry(scId, entry)
+        AgentMemoryStore.appendChatEntry(scId, entry, sessionId = sessionId)
+        dispatchEntry(scId, sessionId, entry)
         if (toolName == "update_long_horizon_plan") {
-            dispatchPlan(scId, AgentMemoryStore.loadPlan(scId))
+            dispatchPlan(scId, sessionId, AgentMemoryStore.loadPlan(scId, sessionId))
         }
     }
 
-    private fun dispatchEntry(scId: String, entry: AgentChatEntry) {
+    private fun dispatchEntry(scId: String, sessionId: String, entry: AgentChatEntry) {
         mainHandler.post {
             for (l in listeners) {
-                l.onChatEntryAdded(scId, entry)
+                l.onChatEntryAdded(scId, sessionId, entry)
             }
         }
     }
 
-    private fun dispatchPlan(scId: String, plan: AgentPlan) {
+    private fun dispatchPlan(scId: String, sessionId: String, plan: AgentPlan) {
         mainHandler.post {
             for (l in listeners) {
-                l.onPlanUpdated(scId, plan)
+                l.onPlanUpdated(scId, sessionId, plan)
             }
         }
     }
 
-    private fun dispatchStatus(scId: String, running: Boolean, status: String, step: Int, maxSteps: Int) {
+    private fun dispatchStatus(scId: String, sessionId: String, running: Boolean, status: String, step: Int, maxSteps: Int) {
         currentStatusText = status
         AgentForegroundService.updateNotification(status)
         mainHandler.post {
             for (l in listeners) {
-                l.onStatusChanged(scId, running, status, step, maxSteps)
+                l.onStatusChanged(scId, sessionId, running, status, step, maxSteps)
             }
         }
     }

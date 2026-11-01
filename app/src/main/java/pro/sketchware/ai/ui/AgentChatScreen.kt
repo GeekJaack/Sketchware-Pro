@@ -163,34 +163,118 @@ class AgentChatScreen(
     private var auroraAnimator: ValueAnimator? = null
     private val dotAnimators = mutableListOf<ObjectAnimator>()
     private val userMessageViews = mutableListOf<Pair<String, View>>()
+    private val entryViewsById = mutableMapOf<String, View>()
     // endregion
 
     // region State
+    private var currentSessionId: String = AgentMemoryStore.getActiveSessionId(scId)
     private var renderedCount = 0
+    private var loadedEntriesCount = 0
     private var stickToBottom = true
     private var currentGroup: ToolGroup? = null
     private val allGroups = mutableListOf<ToolGroup>()
     private var planExpanded = false
-    private var isRunning = AgentOrchestrator.isRunning
+    private var isRunning = AgentOrchestrator.isSessionRunning(scId, currentSessionId)
     private var pulse: ObjectAnimator? = null
-    private val historyLimit = 150
+    private val pageSize = 50
     // endregion
 
+    private val sessionHost = object : SessionUiHelper.Host {
+        override val activity: Activity get() = this@AgentChatScreen.activity
+        override val scId: String get() = this@AgentChatScreen.scId
+        override val activeScreenName: String? get() = this@AgentChatScreen.activeScreenName
+        override val currentSessionId: String get() = this@AgentChatScreen.currentSessionId
+        override val deer: DeerPalette get() = this@AgentChatScreen.deer
+        override val tx: DeerText get() = this@AgentChatScreen.tx
+
+        override fun onSwitchSession(sessionId: String, scrollToEntryId: String?) {
+            switchSession(sessionId, scrollToEntryId)
+        }
+
+        override fun onSessionsMutated() {
+            refreshSidebarRecent()
+            refreshHeader()
+        }
+
+        override fun onEditAndResubmit(entry: AgentChatEntry, newPrompt: String, restoreCheckpoint: Boolean) {
+            if (!config.isConfigured()) {
+                SketchwareUtil.toast("Konfigurasikan model AI terlebih dahulu.")
+                return
+            }
+            val ok = AgentOrchestrator.editAndResubmitUserTurn(
+                context = activity,
+                scId = scId,
+                sessionId = currentSessionId,
+                targetUserEntryId = entry.id,
+                newPrompt = newPrompt,
+                restoreCheckpointFirst = restoreCheckpoint,
+                activeScreenName = activeScreenName
+            )
+            if (ok) {
+                loadHistory()
+                renderPlan(AgentMemoryStore.loadPlan(scId, currentSessionId))
+            }
+        }
+
+        override fun onRegenerate(entry: AgentChatEntry, restoreCheckpoint: Boolean) {
+            if (!config.isConfigured()) {
+                SketchwareUtil.toast("Konfigurasikan model AI terlebih dahulu.")
+                return
+            }
+            val ok = AgentOrchestrator.regenerateFromEntry(
+                context = activity,
+                scId = scId,
+                sessionId = currentSessionId,
+                targetEntryId = entry.id,
+                restoreCheckpointFirst = restoreCheckpoint,
+                activeScreenName = activeScreenName
+            )
+            if (ok) {
+                loadHistory()
+                renderPlan(AgentMemoryStore.loadPlan(scId, currentSessionId))
+            }
+        }
+
+        override fun onUndoPerformed(targetEntry: AgentChatEntry, restoredCheckpointId: String?) {
+            loadHistory()
+            renderPlan(AgentMemoryStore.loadPlan(scId, currentSessionId))
+            refreshSidebarRecent()
+            refreshHeader()
+        }
+    }
+
     private val listener = object : AgentOrchestrator.Listener {
-        override fun onChatEntryAdded(scId: String, entry: AgentChatEntry) {
+        override fun onChatEntryAdded(scId: String, sessionId: String, entry: AgentChatEntry) {
             if (scId != this@AgentChatScreen.scId || !dialog.isShowing) return
-            renderEntry(entry, live = true)
-            scrollToBottomIfSticky()
+            if (sessionId == currentSessionId) {
+                loadedEntriesCount++
+                renderEntry(entry, live = true)
+                scrollToBottomIfSticky()
+            }
+            if (sidebarOpen) refreshSidebarRecent()
         }
 
-        override fun onPlanUpdated(scId: String, plan: AgentPlan) {
+        override fun onPlanUpdated(scId: String, sessionId: String, plan: AgentPlan) {
             if (scId != this@AgentChatScreen.scId || !dialog.isShowing) return
-            renderPlan(plan)
+            if (sessionId == currentSessionId) {
+                renderPlan(plan)
+            }
         }
 
-        override fun onStatusChanged(scId: String, isRunning: Boolean, statusText: String, step: Int, maxSteps: Int) {
+        override fun onStatusChanged(scId: String, sessionId: String, isRunning: Boolean, statusText: String, step: Int, maxSteps: Int) {
             if (scId != this@AgentChatScreen.scId || !dialog.isShowing) return
-            setRunning(isRunning, statusText, step, maxSteps)
+            if (sessionId == currentSessionId) {
+                setRunning(isRunning, statusText, step, maxSteps)
+            } else {
+                setRunning(false, "Siap", 0, 0)
+            }
+            if (sidebarOpen) refreshSidebarRecent()
+        }
+
+        override fun onSessionListChanged(scId: String) {
+            if (scId != this@AgentChatScreen.scId || !dialog.isShowing) return
+            if (sidebarOpen) refreshSidebarRecent()
+            updateThreadTitleFromMeta()
         }
     }
 
@@ -220,8 +304,9 @@ class AgentChatScreen(
         }
 
         loadHistory()
-        renderPlan(AgentMemoryStore.loadPlan(scId))
-        setRunning(AgentOrchestrator.isRunning, AgentOrchestrator.currentStatusText, 0, 0)
+        renderPlan(AgentMemoryStore.loadPlan(scId, currentSessionId))
+        val sessionRunning = AgentOrchestrator.isSessionRunning(scId, currentSessionId)
+        setRunning(sessionRunning, if (sessionRunning) AgentOrchestrator.currentStatusText else "Siap", AgentOrchestrator.currentStep, AgentOrchestrator.currentMaxSteps)
         refreshHeader()
 
         AgentOrchestrator.addListener(listener)
@@ -418,7 +503,7 @@ class AgentChatScreen(
         })
         bar.addView(artifactsBtn, lp(dp(44), dp(44)))
         bar.addView(iconButton(R.drawable.ic_mtrl_terminal, tx.terminal) { TerminalScreen.show(activity, scId) })
-        bar.addView(iconButton(R.drawable.ic_mtrl_edit, tx.newChat) { confirmNewChat() })
+        bar.addView(iconButton(R.drawable.ic_mtrl_edit, tx.newChat) { startNewSession() })
         lateinit var more: View
         more = iconButton(R.drawable.ic_mtrl_more_vertical, "More") { showOverflow(more) }
         bar.addView(more)
@@ -483,7 +568,7 @@ class AgentChatScreen(
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = ripple(rounded(cSurfaceCont, 12f, cOutline))
             isClickable = true
-            setOnClickListener { closeSidebar(); confirmNewChat() }
+            setOnClickListener { closeSidebar(); startNewSession() }
         }
         newChat.addView(tintedIcon(R.drawable.ic_mtrl_edit, cOnSurface, 17))
         newChat.addView(TextView(activity).apply {
@@ -493,6 +578,22 @@ class AgentChatScreen(
             setTextColor(cOnSurface)
         }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
         panel.addView(newChat, lp(-1, -2).apply { leftMargin = dp(12); rightMargin = dp(12); bottomMargin = dp(6) })
+
+        val searchBox = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            background = ripple(rounded(cSurfaceLow, 10f, cOutline))
+            isClickable = true
+            setOnClickListener { SessionUiHelper.showSearchSessionsSheet(sessionHost) { closeSidebar() } }
+        }
+        searchBox.addView(tintedIcon(R.drawable.ic_mtrl_search, cOnSurfaceVar, 16))
+        searchBox.addView(TextView(activity).apply {
+            text = tx.searchSessions
+            textSize = 12.5f
+            setTextColor(cOnSurfaceVar)
+        }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        panel.addView(searchBox, lp(-1, -2).apply { leftMargin = dp(12); rightMargin = dp(12); bottomMargin = dp(4) })
 
         val navScroll = NestedScrollView(activity).apply { isVerticalScrollBarEnabled = false }
         val nav = LinearLayout(activity).apply {
@@ -508,13 +609,13 @@ class AgentChatScreen(
         nav.addView(sidebarItem(R.drawable.ic_mtrl_tune, tx.agentModes, trailing = "${modeTitle(config.autonomyMode)} · ${DeerFlowTheme.modeTag(config.autonomyMode)}") {
             closeSidebar(); showModePicker()
         })
-        nav.addView(sidebarItem(R.drawable.ic_mtrl_star, tx.skills) { closeSidebar(); openExtensions(2) })
-        nav.addView(sidebarItem(R.drawable.ic_mtrl_puzzle, tx.plugins) { closeSidebar(); openExtensions(1) })
-        nav.addView(sidebarItem(R.drawable.ic_mtrl_link, tx.mcp) { closeSidebar(); openExtensions(0) })
+        nav.addView(sidebarItem(R.drawable.ic_mtrl_star, tx.skills) { closeSidebar(); openSkillStudio() })
+        nav.addView(sidebarItem(R.drawable.ic_mtrl_puzzle, tx.plugins) { closeSidebar(); openPluginStudio() })
+        nav.addView(sidebarItem(R.drawable.ic_mtrl_link, tx.mcp) { closeSidebar(); openMcpStudio() })
         nav.addView(sidebarItem(R.drawable.ic_mtrl_terminal, tx.terminal) { closeSidebar(); TerminalScreen.show(activity, scId) })
         nav.addView(sidebarItem(R.drawable.ic_mtrl_history, tx.checkpoints) { closeSidebar(); showCheckpointsDialog() })
 
-        nav.addView(sidebarSection(tx.recent), lp(-1, -2).apply { topMargin = dp(10) })
+        nav.addView(sidebarSection(tx.sessions), lp(-1, -2).apply { topMargin = dp(10) })
         sidebarRecentList = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         nav.addView(sidebarRecentList, lp(-1, -2))
 
@@ -590,33 +691,44 @@ class AgentChatScreen(
 
     private fun refreshSidebarRecent() {
         if (!::sidebarRecentList.isInitialized) return
-        sidebarRecentList.removeAllViews()
-        if (userMessageViews.isEmpty()) {
-            sidebarRecentList.addView(TextView(activity).apply {
-                text = tx.noRecent
-                textSize = 12f
-                setTextColor(cOnSurfaceVar)
-                setPadding(dp(10), dp(6), dp(10), dp(6))
-            })
+        SessionUiHelper.renderSidebarSessionList(sessionHost, sidebarRecentList) { closeSidebar() }
+    }
+
+    private fun switchSession(sessionId: String, scrollToEntryId: String? = null) {
+        currentSessionId = sessionId
+        AgentMemoryStore.setActiveSessionId(scId, sessionId)
+        val sessionRunning = AgentOrchestrator.isSessionRunning(scId, sessionId)
+        setRunning(
+            sessionRunning,
+            if (sessionRunning) AgentOrchestrator.currentStatusText else "Siap",
+            AgentOrchestrator.currentStep,
+            AgentOrchestrator.currentMaxSteps
+        )
+        loadHistory(scrollToEntryId = scrollToEntryId)
+        renderPlan(AgentMemoryStore.loadPlan(scId, sessionId))
+        refreshSidebarRecent()
+        refreshHeader()
+    }
+
+    private fun startNewSession() {
+        val currentEntries = AgentMemoryStore.loadChatEntries(scId, currentSessionId)
+        if (currentEntries.isEmpty() && !AgentOrchestrator.isSessionRunning(scId, currentSessionId)) {
+            SketchwareUtil.toast("Sesi baru sudah siap.")
+            focusComposer()
             return
         }
-        for ((text, view) in userMessageViews.asReversed().take(40)) {
-            val row = TextView(activity).apply {
-                this.text = text.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
-                textSize = 13f
-                setTextColor(cOnSurface)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(dp(10), dp(8), dp(10), dp(8))
-                background = ripple(rounded(Color.TRANSPARENT, 10f))
-                isClickable = true
-                setOnClickListener {
-                    closeSidebar()
-                    stickToBottom = false
-                    scroll.post { scroll.smoothScrollTo(0, (view.top - dp(12)).coerceAtLeast(0)) }
-                }
-            }
-            sidebarRecentList.addView(row, lp(-1, -2))
+        val created = AgentMemoryStore.createSession(scId, title = tx.newChat, setActive = true)
+        switchSession(created.id)
+        focusComposer()
+    }
+
+    private fun updateThreadTitleFromMeta() {
+        if (!::tvThreadTitle.isInitialized) return
+        val meta = AgentMemoryStore.getSessionMeta(scId, currentSessionId)
+        if (meta != null && !AgentMemoryStore.isDefaultSessionTitle(meta.title)) {
+            tvThreadTitle.text = meta.title
+        } else if (renderedCount == 0) {
+            tvThreadTitle.text = meta?.title ?: tx.newChat
         }
     }
 
@@ -643,16 +755,45 @@ class AgentChatScreen(
             .withEndAction { sidebarPanel.visibility = View.GONE }.start()
     }
 
-    private fun openExtensions(tab: Int) {
-        ExtensionsHubDialog.show(
+    private fun openMcpStudio() {
+        McpStudioScreen.show(
             context = activity,
-            initialTab = tab,
             onUsePrompt = { promptText ->
                 prefill(promptText)
                 focusComposer()
             },
             onChanged = { refreshHeader() }
         )
+    }
+
+    private fun openPluginStudio() {
+        PluginStudioScreen.show(
+            context = activity,
+            onUsePrompt = { promptText ->
+                prefill(promptText)
+                focusComposer()
+            },
+            onChanged = { refreshHeader() }
+        )
+    }
+
+    private fun openSkillStudio() {
+        SkillStudioScreen.show(
+            context = activity,
+            onUsePrompt = { promptText ->
+                prefill(promptText)
+                focusComposer()
+            },
+            onChanged = { refreshHeader() }
+        )
+    }
+
+    private fun openExtensions(tab: Int) {
+        when (tab) {
+            1 -> openPluginStudio()
+            2 -> openSkillStudio()
+            else -> openMcpStudio()
+        }
     }
 
     private fun showArtifactsSheet() {
@@ -1486,45 +1627,67 @@ class AgentChatScreen(
     // Conversation Rendering
     // ------------------------------------------------------------------------------------------
 
-    private fun loadHistory() {
+    private fun loadHistory(loadMorePages: Int = 1, scrollToEntryId: String? = null) {
         messages.removeAllViews()
         renderedCount = 0
         currentGroup = null
         allGroups.clear()
         userMessageViews.clear()
-        val entries = AgentMemoryStore.loadChatEntries(scId)
-        val start = (entries.size - historyLimit).coerceAtLeast(0)
+        entryViewsById.clear()
+
+        val allEntries = AgentMemoryStore.loadChatEntries(scId, currentSessionId)
+        val total = allEntries.size
+        val targetLoaded = if (scrollToEntryId != null) {
+            val targetIdx = allEntries.indexOfFirst { it.id == scrollToEntryId }
+            if (targetIdx >= 0) maxOf(pageSize * loadMorePages, total - targetIdx + 5) else pageSize * loadMorePages
+        } else {
+            pageSize * loadMorePages
+        }
+        val start = (total - targetLoaded).coerceAtLeast(0)
+        loadedEntriesCount = total - start
+
         if (start > 0) {
             val more = TextView(activity).apply {
-                text = "Tampilkan $start pesan sebelumnya"
+                text = "${tx.loadOlderMessages} ($start lagi)"
                 textSize = 12f
+                setTypeface(Typeface.DEFAULT, Typeface.BOLD)
                 gravity = Gravity.CENTER
                 setTextColor(cPrimary)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
+                setPadding(dp(14), dp(8), dp(14), dp(8))
                 background = ripple(rounded(cSurfaceLow, 16f, cOutline))
                 isClickable = true
             }
-            more.setOnClickListener { loadAll(entries) }
-            messages.addView(more, lp(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(8) })
+            more.setOnClickListener {
+                val prevHeight = messages.height
+                loadHistory(loadMorePages = loadMorePages + 1)
+                scroll.post {
+                    val delta = (messages.height - prevHeight).coerceAtLeast(0)
+                    scroll.scrollTo(0, delta)
+                }
+            }
+            messages.addView(more, lp(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(10) })
         }
-        for (i in start until entries.size) renderEntry(entries[i], live = false)
-        allGroups.dropLast(1).forEach { it.setExpanded(false) }
-        ensureThinkingRowLast()
-        updateEmptyState()
-        refreshArtifactsBadge()
-        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
-    }
 
-    private fun loadAll(entries: List<AgentChatEntry>) {
-        messages.removeAllViews()
-        renderedCount = 0
-        currentGroup = null
-        allGroups.clear()
-        userMessageViews.clear()
-        entries.forEach { renderEntry(it, live = false) }
+        for (i in start until total) {
+            renderEntry(allEntries[i], live = false)
+        }
         allGroups.dropLast(1).forEach { it.setExpanded(false) }
         ensureThinkingRowLast()
         updateEmptyState()
+        updateThreadTitleFromMeta()
+        refreshArtifactsBadge()
+
+        if (scrollToEntryId != null) {
+            val targetView = entryViewsById[scrollToEntryId]
+            if (targetView != null) {
+                stickToBottom = false
+                scroll.post { scroll.smoothScrollTo(0, (targetView.top - dp(16)).coerceAtLeast(0)) }
+                return
+            }
+        }
+        if (loadMorePages == 1) {
+            scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+        }
     }
 
     private fun renderEntry(entry: AgentChatEntry, live: Boolean) {
@@ -1553,26 +1716,29 @@ class AgentChatScreen(
 
             ChatEntryType.USER -> {
                 closeGroup(live)
-                val v = userBubble(entry.body)
+                val v = userBubble(entry)
+                entryViewsById[entry.id] = v
                 addMessageView(v)
                 val cleanLine = entry.body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
                 if (cleanLine.isNotEmpty()) {
                     userMessageViews.add(cleanLine to v)
-                    if (userMessageViews.size == 1 && ::tvThreadTitle.isInitialized) {
-                        tvThreadTitle.text = cleanLine
-                    }
                 }
+                updateThreadTitleFromMeta()
             }
 
             ChatEntryType.ASSISTANT -> {
                 if (entry.body.isBlank()) return
                 closeGroup(live)
-                addMessageView(assistantMessage(entry))
+                val v = assistantMessage(entry)
+                entryViewsById[entry.id] = v
+                addMessageView(v)
             }
 
             ChatEntryType.STATUS -> {
                 closeGroup(live)
-                addMessageView(statusNote(entry))
+                val v = statusNote(entry)
+                entryViewsById[entry.id] = v
+                addMessageView(v)
             }
 
             ChatEntryType.ERROR -> {
@@ -1584,7 +1750,9 @@ class AgentChatScreen(
                     group.refreshHeader()
                 } else {
                     closeGroup(live)
-                    addMessageView(errorCard(entry))
+                    val v = errorCard(entry)
+                    entryViewsById[entry.id] = v
+                    addMessageView(v)
                 }
             }
         }
@@ -1625,8 +1793,8 @@ class AgentChatScreen(
         }
     }
 
-    private fun userBubble(text: String): View {
-        val displayBody = text.substringBefore("\n\n---Perhatian Agent:").trim()
+    private fun userBubble(entry: AgentChatEntry): View {
+        val displayBody = entry.body.substringBefore("\n\n---Perhatian Agent:").trim()
         val wrap = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
@@ -1642,6 +1810,21 @@ class AgentChatScreen(
             maxWidth = (activity.resources.displayMetrics.widthPixels * 0.84f).toInt()
         }
         wrap.addView(tv, lp(-2, -2))
+
+        val actions = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+        }
+        actions.addView(smallAction(R.drawable.ic_mtrl_edit, tx.editPrompt) {
+            SessionUiHelper.showEditUserPromptDialog(sessionHost, entry)
+        })
+        actions.addView(smallAction(R.drawable.ic_mtrl_history, tx.undoToHere) {
+            SessionUiHelper.confirmUndoToEntry(sessionHost, entry)
+        })
+        actions.addView(smallAction(R.drawable.ic_mtrl_link, tx.forkHere) {
+            SessionUiHelper.confirmForkFromEntry(sessionHost, entry)
+        })
+        wrap.addView(actions, lp(-2, -2).apply { topMargin = dp(2) })
         return wrap
     }
 
@@ -1670,6 +1853,15 @@ class AgentChatScreen(
 
         val actions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         actions.addView(smallAction(R.drawable.ic_mtrl_file, tx.copy) { copy(entry.body, "Respons disalin") })
+        actions.addView(smallAction(R.drawable.ic_mtrl_refresh, tx.regenerate) {
+            SessionUiHelper.confirmRegenerateTurn(sessionHost, entry)
+        })
+        actions.addView(smallAction(R.drawable.ic_mtrl_history, tx.undoToHere) {
+            SessionUiHelper.confirmUndoToEntry(sessionHost, entry)
+        })
+        actions.addView(smallAction(R.drawable.ic_mtrl_link, tx.forkHere) {
+            SessionUiHelper.confirmForkFromEntry(sessionHost, entry)
+        })
         col.addView(actions, lp(-2, -2).apply { topMargin = dp(2) })
         return col
     }
@@ -2090,8 +2282,16 @@ class AgentChatScreen(
             updateSlashSuggestions("/", forceShowAll = true)
             return
         }
-        if (isRunning) {
-            SketchwareUtil.toast("Agent sedang bekerja. Tekan tombol stop untuk membatalkan.")
+        if (AgentOrchestrator.isRunning) {
+            val runningMeta = AgentOrchestrator.runningSessionId?.let {
+                AgentMemoryStore.getSessionMeta(scId, it)
+            }
+            val where = if (runningMeta != null && runningMeta.id != currentSessionId) {
+                " pada sesi '${runningMeta.title}'"
+            } else {
+                ""
+            }
+            SketchwareUtil.toast("Agent sedang bekerja$where. Hentikan proses yang berjalan terlebih dahulu.")
             return
         }
         hideSlashPanel()
@@ -2129,38 +2329,39 @@ class AgentChatScreen(
         stickToBottom = true
         if (!config.isConfigured()) {
             val userEntry = AgentChatEntry(UUID.randomUUID().toString(), ChatEntryType.USER, "Anda (MCP Bridge Queue)", text)
-            AgentMemoryStore.appendChatEntry(scId, userEntry)
+            AgentMemoryStore.appendChatEntry(scId, userEntry, sessionId = currentSessionId)
             renderEntry(userEntry, live = true)
             val info = AgentChatEntry(
                 UUID.randomUUID().toString(), ChatEntryType.ASSISTANT,
                 "MCP Server (Port ${SketchwareMcpServer.boundPort})",
-                "Instruksi dicatat di memori proyek **#$scId**.\n\n" +
+                "Instruksi dicatat di memori proyek **#$scId** (Sesi: `${currentSessionId}`).\n\n" +
                     "- Agent eksternal (Antigravity / Claude Code / Cursor) yang terhubung ke MCP Server dapat langsung mengeksekusinya.\n" +
                     "- Atau atur API key lewat tombol model di bawah untuk menjalankan agent langsung di HP."
             )
-            AgentMemoryStore.appendChatEntry(scId, info)
+            AgentMemoryStore.appendChatEntry(scId, info, sessionId = currentSessionId)
             renderEntry(info, live = true)
             scrollToBottomIfSticky()
             return
         }
         hideKeyboard()
-        AgentOrchestrator.startUserTask(activity, scId, text, activeScreenName)
+        AgentOrchestrator.startUserTask(activity, scId, text, activeScreenName, sessionId = currentSessionId)
     }
 
     private fun confirmNewChat() {
         val ui = pro.sketchware.ai.config.AiStrings.current(activity)
-        if (isRunning) {
+        if (AgentOrchestrator.isSessionRunning(scId, currentSessionId)) {
             SketchwareUtil.toast("Hentikan agent terlebih dahulu.")
             return
         }
         com.google.android.material.dialog.MaterialAlertDialogBuilder(activity)
-            .setTitle(ui.newChatTitle)
+            .setTitle(tx.clearCurrentSession)
             .setMessage(ui.newChatConfirmMsg)
             .setNegativeButton(ui.cancelText, null)
             .setPositiveButton(ui.newChatStartBtn) { _, _ ->
-                AgentMemoryStore.clearSession(scId)
+                AgentMemoryStore.clearSession(scId, currentSessionId)
                 renderPlan(AgentPlan())
                 loadHistory()
+                refreshSidebarRecent()
             }
             .show()
     }
@@ -2168,20 +2369,36 @@ class AgentChatScreen(
     private fun showOverflow(anchor: View) {
         val ui = pro.sketchware.ai.config.AiStrings.current(activity)
         PopupMenu(activity, anchor).apply {
-            menu.add(0, 8, 0, "📦 ${tx.artifacts}")
-            menu.add(0, 1, 1, ui.menuSettings)
-            menu.add(0, 7, 2, "${ui.menuLanguage} (${config.agentLanguage.shortBadge})")
-            menu.add(0, 5, 3, ui.menuExtensions)
-            menu.add(0, 4, 4, ui.menuTerminal)
-            menu.add(0, 6, 5, ui.menuCheckpoints)
-            menu.add(0, 2, 6, ui.menuCopyTranscript)
-            menu.add(0, 3, 7, ui.newChatStartBtn)
+            menu.add(0, 9, 0, "➕ ${tx.newChat}")
+            menu.add(0, 10, 1, "🔍 ${tx.searchSessions}")
+            menu.add(0, 11, 2, "📤 ${tx.exportMarkdown}")
+            menu.add(0, 12, 3, "🌿 ${tx.forkSession}")
+            menu.add(0, 8, 4, "📦 ${tx.artifacts}")
+            menu.add(0, 1, 5, "🔑 ${ui.menuSettings}")
+            menu.add(0, 5, 6, "🔌 ${tx.mcp} (205 REA Tools)")
+            menu.add(0, 13, 7, "🧩 ${tx.plugins}")
+            menu.add(0, 14, 8, "📚 ${tx.skills} (SKILL.md)")
+            menu.add(0, 7, 9, "${ui.menuLanguage} (${config.agentLanguage.shortBadge})")
+            menu.add(0, 4, 10, ui.menuTerminal)
+            menu.add(0, 6, 11, ui.menuCheckpoints)
+            menu.add(0, 2, 12, ui.menuCopyTranscript)
+            menu.add(0, 3, 13, tx.clearCurrentSession)
             setOnMenuItemClickListener {
                 when (it.itemId) {
+                    9 -> startNewSession()
+                    10 -> SessionUiHelper.showSearchSessionsSheet(sessionHost) { closeSidebar() }
+                    11 -> SessionUiHelper.exportAndShareSessionMarkdown(sessionHost, currentSessionId)
+                    12 -> {
+                        val forked = AgentMemoryStore.forkSession(scId, currentSessionId, upToEntryId = null, setActive = true)
+                        SketchwareUtil.toast("Sesi dicabangkan: ${forked.title}")
+                        switchSession(forked.id)
+                    }
                     8 -> showArtifactsSheet()
                     1 -> AiSettingsDialog.show(activity) { refreshHeader() }
+                    5 -> openMcpStudio()
+                    13 -> openPluginStudio()
+                    14 -> openSkillStudio()
                     7 -> pro.sketchware.ai.config.AiStrings.showLanguagePickerDialog(activity) { rebuildSidebar(); refreshHeader() }
-                    5 -> openExtensions(0)
                     4 -> TerminalScreen.show(activity, scId)
                     6 -> showCheckpointsDialog()
                     2 -> copy(exportTranscript(), ui.copiedToast)
@@ -2481,7 +2698,7 @@ class AgentChatScreen(
     }
 
     private fun exportTranscript(): String = buildString {
-        for (e in AgentMemoryStore.loadChatEntries(scId)) {
+        for (e in AgentMemoryStore.loadChatEntries(scId, currentSessionId)) {
             val who = when (e.type) {
                 ChatEntryType.USER -> "Anda"
                 ChatEntryType.ASSISTANT -> "Agent"
@@ -2665,6 +2882,7 @@ class AgentChatScreen(
         "web_fetch" to "Mengambil halaman web",
         "use_skill" to "Memuat Skill",
         "manage_plugins" to "Mengelola Plugin",
+        "search_mcp_tools" to "Mencari katalog 205 REA/MCP tools",
         "manage_mcp_connectors" to "Mengelola konektor MCP",
         "call_mcp_tool" to "Memanggil tool MCP",
         "manage_artifacts" to "Mengelola Workspace Artifacts",
