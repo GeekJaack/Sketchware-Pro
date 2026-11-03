@@ -8,7 +8,11 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -23,6 +27,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import com.google.android.material.button.MaterialButton
+import pro.sketchware.ai.provider.LlmClient
 import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
@@ -240,6 +245,14 @@ object AiSettingsDialog {
         tilApiKey.addView(etApiKey)
         credentialsCard.addView(tilApiKey, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
+        val tvKeyHint = TextView(context).apply {
+            textSize = 11.5f
+            setTextColor(p.warning)
+            visibility = View.GONE
+            setPadding(dp(4f), dp(4f), dp(4f), 0)
+        }
+        credentialsCard.addView(tvKeyHint)
+
         val tilModel = TextInputLayout(context).apply {
             hint = "Model ID (contoh: gemini-2.5-pro, gpt-4.1, claude-sonnet-4-20250514)"
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
@@ -301,6 +314,47 @@ object AiSettingsDialog {
             }
         )
 
+        val tvEndpoint = TextView(context).apply {
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setTextColor(p.mutedForeground)
+            setPadding(dp(4f), dp(4f), dp(4f), 0)
+        }
+        credentialsCard.addView(tvEndpoint)
+
+        val diagnostics = ExtText(config.agentLanguage)
+        val llmProbe by lazy { LlmClient() }
+
+        fun updateKeyHint() {
+            val hint = ApiKeyHints.check(selectedProvider, etApiKey.text?.toString().orEmpty())
+            if (hint == null) {
+                tvKeyHint.visibility = View.GONE
+            } else {
+                tvKeyHint.text = "⚠ " + diagnostics.keyHint(hint)
+                tvKeyHint.visibility = View.VISIBLE
+            }
+        }
+
+        fun updateEndpointPreview() {
+            val url = etBaseUrl.text?.toString().orEmpty().trim().ifEmpty { selectedProvider.defaultBaseUrl }
+            val openAiStyle = selectedProvider == AiProviderType.OPENAI ||
+                selectedProvider == AiProviderType.OPENROUTER || selectedProvider == AiProviderType.CUSTOM
+            tvEndpoint.text = if (!openAiStyle) {
+                "Endpoint: ${url.trimEnd('/')}"
+            } else {
+                val base = llmProbe.normalizeOpenAiBaseUrl(url)
+                "Endpoint: " + if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+            }
+        }
+
+        fun watcher(onChange: () -> Unit) = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable?) = onChange()
+        }
+        etApiKey.addTextChangedListener(watcher { updateKeyHint() })
+        etBaseUrl.addTextChangedListener(watcher { updateEndpointPreview() })
+
         val keyActionRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -335,6 +389,63 @@ object AiSettingsDialog {
                 topMargin = dp(12f)
             }
         )
+
+        val btnTestConnection = MaterialButton(context, null, MR.attr.materialButtonOutlinedStyle).apply {
+            text = diagnostics.t("Uji Koneksi", "Test connection")
+            textSize = 11.5f
+            isAllCaps = false
+            minHeight = dp(40f)
+            setTextColor(p.foreground)
+            strokeColor = ColorStateList.valueOf(p.border)
+        }
+        val tvTestResult = TextView(context).apply {
+            textSize = 12f
+            visibility = View.GONE
+            setPadding(dp(4f), dp(8f), dp(4f), 0)
+        }
+        credentialsCard.addView(
+            btnTestConnection,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8f)
+            }
+        )
+        credentialsCard.addView(tvTestResult)
+
+        btnTestConnection.setOnClickListener {
+            val provider = selectedProvider
+            val key = etApiKey.text?.toString()?.trim().orEmpty()
+            val model = etModel.text?.toString()?.trim().orEmpty()
+            val url = etBaseUrl.text?.toString()?.trim().orEmpty()
+            tvTestResult.visibility = View.VISIBLE
+            if (key.isEmpty() && provider != AiProviderType.CUSTOM) {
+                tvTestResult.setTextColor(p.warning)
+                tvTestResult.text = diagnostics.t("Isi API Key dulu sebelum menguji.", "Enter an API key before testing.")
+                return@setOnClickListener
+            }
+            btnTestConnection.isEnabled = false
+            tvTestResult.setTextColor(p.mutedForeground)
+            tvTestResult.text = diagnostics.t("Menguji koneksi…", "Testing connection…")
+            val mainHandler = Handler(Looper.getMainLooper())
+            Thread {
+                val started = System.nanoTime()
+                val outcome = runCatching { llmProbe.ping(provider, key, url, model) }
+                val ms = (System.nanoTime() - started) / 1_000_000
+                mainHandler.post {
+                    btnTestConnection.isEnabled = true
+                    outcome.fold(
+                        onSuccess = { r ->
+                            val reply = r.text.trim().replace("\n", " ").take(60)
+                            tvTestResult.setTextColor(p.success)
+                            tvTestResult.text = diagnostics.t("✓ Terhubung (${ms} ms). Balasan: \"$reply\"", "✓ Connected (${ms} ms). Reply: \"$reply\"")
+                        },
+                        onFailure = { e ->
+                            tvTestResult.setTextColor(p.destructive)
+                            tvTestResult.text = "✗ " + (e.message ?: e.javaClass.simpleName).take(300)
+                        }
+                    )
+                }
+            }.start()
+        }
         content.addView(credentialsCard)
 
         // ==================================================================
@@ -535,6 +646,9 @@ object AiSettingsDialog {
             etApiKey.setText(config.getApiKey(provider))
             etModel.setText(config.getModelId(provider))
             etBaseUrl.setText(config.getBaseUrl(provider))
+            tvTestResult.visibility = View.GONE
+            updateKeyHint()
+            updateEndpointPreview()
             updateKeyStatusLabel(provider)
             renderModelChips(provider)
             renderProviderCards()

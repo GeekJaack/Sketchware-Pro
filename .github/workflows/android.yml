@@ -35,7 +35,24 @@ jobs:
         run: chmod +x ./gradlew
 
       - name: Run Unit Tests & Assemble APK
-        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Surface build errors as annotations
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^e: |: error: |FAILED|AssertionError|AssertionFailedError|What went wrong" build.log | sed 's#file:///home/runner/work/[^/]*/[^/]*/##' | awk '!seen[$0]++' | head -150 > errors.txt || true
+          python3 - <<'EOF'
+          lines = [l.strip()[:400] for l in open('errors.txt') if l.strip()]
+          chunks = [lines[i:i+15] for i in range(0, len(lines), 15)][:9]
+          for c in chunks:
+              print("::error::" + "%0A".join(c))
+          if not chunks:
+              print("::error::build failed but no error lines were captured; see build.log tail")
+          EOF
 
       - name: Prepare Release Artifacts
         id: prep
