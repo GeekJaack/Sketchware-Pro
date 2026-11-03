@@ -38,7 +38,7 @@ internal class ModelSettingsPage(
     private val isDark = ColorUtils.calculateLuminance(ThemeUtils.getColor(activity, MR.attr.colorSurface)) < 0.5
     private val p = DeerFlowTheme.palette(isDark)
     private val ui = DeerUi(activity, p, isDark)
-    private val x = ExtText(config.agentLanguage)
+    private val tx = ExtText(config.agentLanguage)
     private val dialog = Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar)
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
     private val llm by lazy { LlmClient() }
@@ -81,11 +81,11 @@ internal class ModelSettingsPage(
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(ui.dp(16), ui.dp(12), ui.dp(8), ui.dp(4))
-            addView(ui.iconTile(x.t("API Key", "API Key"), R.drawable.ic_mtrl_key, 40))
+            addView(ui.iconTile(tx.t("API Key", "API Key"), R.drawable.ic_mtrl_key, 40))
             addView(ui.column().apply {
                 setPadding(ui.dp(12), 0, ui.dp(8), 0)
-                addView(ui.text(x.t("API Key & Model", "API Key & Model"), 19f, p.foreground, bold = true))
-                addView(ui.text(x.t("Pilih penyedia, tempel key, lalu uji koneksinya.", "Pick a provider, paste the key, then test the connection."), 12.5f, p.mutedForeground, maxLines = 2))
+                addView(ui.text(tx.t("API Key & Model", "API Key & Model"), 19f, p.foreground, bold = true))
+                addView(ui.text(tx.t("Pilih penyedia, tempel key, lalu uji koneksinya.", "Pick a provider, paste the key, then test the connection."), 12.5f, p.mutedForeground, maxLines = 2))
             }, ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(ui.icon(R.drawable.ic_mtrl_close, p.foreground, 22).apply {
                 setPadding(ui.dp(9), ui.dp(9), ui.dp(9), ui.dp(9))
@@ -93,7 +93,7 @@ internal class ModelSettingsPage(
                 background = ui.ripple(null, 22)
                 isClickable = true
                 isFocusable = true
-                contentDescription = x.t("Tutup", "Close")
+                contentDescription = tx.t("Tutup", "Close")
                 setOnClickListener { dialog.dismiss() }
             })
         })
@@ -132,16 +132,16 @@ internal class ModelSettingsPage(
         baseField = null
 
         content.addView(activeCard())
-        content.addView(ui.sectionLabel(x.t("Penyedia", "Provider")))
+        content.addView(ui.sectionLabel(tx.t("Penyedia", "Provider")))
         AiProviderType.entries.forEach { content.addView(providerRow(it)) }
 
-        content.addView(ui.sectionLabel(x.t("Kredensial", "Credentials")))
+        content.addView(ui.sectionLabel(tx.t("Kredensial", "Credentials")))
         content.addView(credentialsCard())
 
         content.addView(ui.row().apply {
             setPadding(0, ui.dp(2), 0, 0)
-            addView(ui.button(x.t("Simpan & aktifkan", "Save & activate"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_check) { save() }, ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(ui.button(x.t("Uji koneksi", "Test connection"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_sync) { testConnection() },
+            addView(ui.button(tx.t("Simpan & aktifkan", "Save & activate"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_check) { save() }, ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(ui.button(tx.t("Uji koneksi", "Test connection"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_sync) { testConnection() },
                 ui.lpMargin(0, ViewGroup.LayoutParams.WRAP_CONTENT, l = 8, weight = 1f))
         })
         testState?.let { (color, message) ->
@@ -150,14 +150,14 @@ internal class ModelSettingsPage(
 
         val profiles = config.getSavedProfiles()
         if (profiles.isNotEmpty()) {
-            content.addView(ui.sectionLabel(x.t("Profil tersimpan", "Saved profiles")))
+            content.addView(ui.sectionLabel(tx.t("Profil tersimpan", "Saved profiles")))
             profiles.forEach { content.addView(profileCard(it)) }
         }
 
-        content.addView(ui.sectionLabel(x.t("Zona berbahaya", "Danger zone")))
+        content.addView(ui.sectionLabel(tx.t("Zona berbahaya", "Danger zone")))
         content.addView(ui.row().apply {
-            addView(ui.button(x.t("Hapus key penyedia ini", "Delete this provider's key"), ButtonKind.DANGER) { deleteKey() })
-            addView(ui.button(x.t("Hapus semua key", "Delete all keys"), ButtonKind.DANGER) { deleteAllKeys() }, ui.lpMargin(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, l = 8))
+            addView(ui.button(tx.t("Hapus key penyedia ini", "Delete this provider's key"), ButtonKind.DANGER) { deleteKey() })
+            addView(ui.button(tx.t("Hapus semua key", "Delete all keys"), ButtonKind.DANGER) { deleteAllKeys() }, ui.lpMargin(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, l = 8))
         })
     }
 
@@ -168,11 +168,11 @@ internal class ModelSettingsPage(
         val card = ui.card()
         card.addView(ui.row().apply {
             addView(ui.column().apply {
-                addView(ui.text(x.t("Model aktif", "Active model"), 11.5f, p.mutedForeground, bold = true))
+                addView(ui.text(tx.t("Model aktif", "Active model"), 11.5f, p.mutedForeground, bold = true))
                 addView(ui.text(config.getModelId(active), 16f, p.foreground, bold = true, mono = true, maxLines = 1).apply { setPadding(0, ui.dp(2), 0, 0) })
                 addView(ui.text(providerName(active) + if (key.isNotEmpty()) "  ·  " + AiConfigManager.maskApiKey(key) else "", 12.5f, p.mutedForeground, maxLines = 1).apply { setPadding(0, ui.dp(2), 0, 0) })
             }, ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(ui.pill(if (ready) x.t("Siap", "Ready") else x.t("Belum diatur", "Not set"), if (ready) p.success else p.warning, ui.alpha(if (ready) p.success else p.warning, 40)))
+            addView(ui.pill(if (ready) tx.t("Siap", "Ready") else tx.t("Belum diatur", "Not set"), if (ready) p.success else p.warning, ui.alpha(if (ready) p.success else p.warning, 40)))
         })
         return card
     }
@@ -182,7 +182,7 @@ internal class ModelSettingsPage(
         AiProviderType.OPENAI -> "OpenAI"
         AiProviderType.OPENROUTER -> "OpenRouter"
         AiProviderType.CLAUDE -> "Anthropic Claude"
-        AiProviderType.CUSTOM -> x.t("Kustom (kompatibel OpenAI)", "Custom (OpenAI-compatible)")
+        AiProviderType.CUSTOM -> tx.t("Kustom (kompatibel OpenAI)", "Custom (OpenAI-compatible)")
     }
 
     private fun providerRow(pr: AiProviderType): View {
@@ -203,7 +203,7 @@ internal class ModelSettingsPage(
                 addView(ui.text(providerName(pr), 14.5f, p.foreground, bold = true))
                 addView(ui.text(pr.defaultModel, 11.5f, p.mutedForeground, mono = true, maxLines = 1).apply { setPadding(0, ui.dp(2), 0, 0) })
             }, ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            if (hasKey) addView(ui.pill(x.t("Key tersimpan", "Key saved"), p.success, ui.alpha(p.success, 36)))
+            if (hasKey) addView(ui.pill(tx.t("Key tersimpan", "Key saved"), p.success, ui.alpha(p.success, 36)))
             setOnClickListener {
                 if (pr != provider) {
                     captureDrafts()
@@ -227,17 +227,17 @@ internal class ModelSettingsPage(
             val h = ApiKeyHints.check(provider, typed)
             when {
                 h != null -> {
-                    hint.text = x.keyHint(h)
+                    hint.text = tx.keyHint(h)
                     hint.setTextColor(p.warning)
                     hint.visibility = View.VISIBLE
                 }
                 typed.isNotEmpty() && typed == saved -> {
-                    hint.text = x.t("✓ Tersimpan: ", "✓ Saved: ") + AiConfigManager.maskApiKey(saved)
+                    hint.text = tx.t("✓ Tersimpan: ", "✓ Saved: ") + AiConfigManager.maskApiKey(saved)
                     hint.setTextColor(p.success)
                     hint.visibility = View.VISIBLE
                 }
                 typed.isEmpty() && provider == AiProviderType.CUSTOM -> {
-                    hint.text = x.t("Key opsional untuk server lokal (mis. Ollama).", "The key is optional for local servers (for example Ollama).")
+                    hint.text = tx.t("Key opsional untuk server lokal (mis. Ollama).", "The key is optional for local servers (for example Ollama).")
                     hint.setTextColor(p.mutedForeground)
                     hint.visibility = View.VISIBLE
                 }
@@ -249,13 +249,13 @@ internal class ModelSettingsPage(
         card.addView(hint)
         updateHint()
 
-        val model = ui.field(x.t("Model ID", "Model ID"), currentModel(), mono = true)
+        val model = ui.field(tx.t("Model ID", "Model ID"), currentModel(), mono = true)
         modelField = model
         card.addView(model.layout)
         card.addView(modelChips(model))
 
         card.addView(ui.button(
-            if (advancedOpen) x.t("Sembunyikan lanjutan", "Hide advanced") else x.t("Lanjutan: Base URL", "Advanced: Base URL"),
+            if (advancedOpen) tx.t("Sembunyikan lanjutan", "Hide advanced") else tx.t("Lanjutan: Base URL", "Advanced: Base URL"),
             ButtonKind.TEXT
         ) {
             captureDrafts()
@@ -274,7 +274,7 @@ internal class ModelSettingsPage(
             base.edit.addTextChangedListener(simpleWatcher { updatePreview() })
             updatePreview()
             card.addView(preview)
-            card.addView(ui.button(x.t("Kembalikan ke default", "Reset to default"), ButtonKind.TEXT) {
+            card.addView(ui.button(tx.t("Kembalikan ke default", "Reset to default"), ButtonKind.TEXT) {
                 base.edit.setText(provider.defaultBaseUrl)
             })
         }
@@ -283,7 +283,7 @@ internal class ModelSettingsPage(
 
     private fun endpointPreview(baseUrl: String): String {
         val openAiStyle = provider == AiProviderType.OPENAI || provider == AiProviderType.OPENROUTER || provider == AiProviderType.CUSTOM
-        if (!openAiStyle) return x.t("Endpoint: ", "Endpoint: ") + baseUrl.trimEnd('/')
+        if (!openAiStyle) return tx.t("Endpoint: ", "Endpoint: ") + baseUrl.trimEnd('/')
         val base = llm.normalizeOpenAiBaseUrl(baseUrl)
         return "Endpoint: " + if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
     }
@@ -304,7 +304,7 @@ internal class ModelSettingsPage(
                 if (isCustom) {
                     setOnLongClickListener {
                         config.removeCustomModel(name, provider)
-                        Toast.makeText(activity, x.t("Model '$name' dihapus dari daftar.", "Model '$name' removed from the list."), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activity, tx.t("Model '$name' dihapus dari daftar.", "Model '$name' removed from the list."), Toast.LENGTH_SHORT).show()
                         captureDrafts()
                         render()
                         true
@@ -314,7 +314,7 @@ internal class ModelSettingsPage(
         }
         return ui.column().apply {
             addView(flow)
-            if (custom.isNotEmpty()) addView(ui.text(x.t("Tekan lama model berlabel ✕ untuk menghapusnya.", "Long-press a model marked ✕ to remove it."), 11f, p.mutedForeground).apply { setPadding(ui.dp(2), 0, 0, ui.dp(6)) })
+            if (custom.isNotEmpty()) addView(ui.text(tx.t("Tekan lama model berlabel ✕ untuk menghapusnya.", "Long-press a model marked ✕ to remove it."), 11f, p.mutedForeground).apply { setPadding(ui.dp(2), 0, 0, ui.dp(6)) })
         }
     }
 
@@ -335,12 +335,12 @@ internal class ModelSettingsPage(
                 addView(ui.text(providerName(pr.provider), 14f, p.foreground, bold = true, maxLines = 1))
                 addView(ui.text(pr.modelId + "  ·  " + AiConfigManager.maskApiKey(pr.apiKey), 12f, p.mutedForeground, mono = true, maxLines = 1).apply { setPadding(0, ui.dp(2), 0, 0) })
             }, ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            if (active) addView(ui.pill(x.t("Aktif", "Active"), p.success, ui.alpha(p.success, 36)))
+            if (active) addView(ui.pill(tx.t("Aktif", "Active"), p.success, ui.alpha(p.success, 36)))
         })
         card.addView(ui.row(Gravity.END or Gravity.CENTER_VERTICAL).apply {
             setPadding(0, ui.dp(8), 0, 0)
-            if (!active) addView(ui.button(x.t("Pakai", "Use"), ButtonKind.TEXT) { activate(pr) })
-            addView(ui.button(x.t("Hapus", "Delete"), ButtonKind.DANGER) {
+            if (!active) addView(ui.button(tx.t("Pakai", "Use"), ButtonKind.TEXT) { activate(pr) })
+            addView(ui.button(tx.t("Hapus", "Delete"), ButtonKind.DANGER) {
                 config.deleteProfile(pr.id)
                 render()
             }, ui.lpMargin(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, l = 4))
@@ -358,7 +358,7 @@ internal class ModelSettingsPage(
         provider = pr.provider
         draftKey.clear(); draftModel.clear(); draftBase.clear()
         testState = null
-        toast(x.t("Profil diaktifkan: ${pr.modelId}", "Profile activated: ${pr.modelId}"))
+        toast(tx.t("Profil diaktifkan: ${pr.modelId}", "Profile activated: ${pr.modelId}"))
         render()
         onChanged?.invoke()
     }
@@ -369,7 +369,7 @@ internal class ModelSettingsPage(
         val model = currentModel().trim().ifEmpty { provider.defaultModel }
         val base = currentBase().trim().ifEmpty { provider.defaultBaseUrl }
         if (key.isEmpty() && provider != AiProviderType.CUSTOM) {
-            toast(x.t("API Key wajib diisi untuk ${providerName(provider)}.", "An API key is required for ${providerName(provider)}."))
+            toast(tx.t("API Key wajib diisi untuk ${providerName(provider)}.", "An API key is required for ${providerName(provider)}."))
             return
         }
         config.providerType = provider
@@ -378,7 +378,7 @@ internal class ModelSettingsPage(
         config.setBaseUrl(if (base == provider.defaultBaseUrl) "" else base, provider)
         if (key.isNotEmpty()) config.saveProfile(provider, key, model, base)
         draftKey.remove(provider); draftModel.remove(provider); draftBase.remove(provider)
-        toast(x.t("Tersimpan. Model aktif: $model", "Saved. Active model: $model"))
+        toast(tx.t("Tersimpan. Model aktif: $model", "Saved. Active model: $model"))
         render()
         onChanged?.invoke()
     }
@@ -390,11 +390,11 @@ internal class ModelSettingsPage(
         val base = currentBase().trim()
         val target = provider
         if (key.isEmpty() && target != AiProviderType.CUSTOM) {
-            testState = p.warning to x.t("Isi API Key dulu sebelum menguji.", "Enter an API key before testing.")
+            testState = p.warning to tx.t("Isi API Key dulu sebelum menguji.", "Enter an API key before testing.")
             render()
             return
         }
-        testState = p.mutedForeground to x.t("Menguji koneksi…", "Testing connection…")
+        testState = p.mutedForeground to tx.t("Menguji koneksi…", "Testing connection…")
         render()
         worker.execute {
             val started = System.nanoTime()
@@ -405,7 +405,7 @@ internal class ModelSettingsPage(
                 testState = outcome.fold(
                     onSuccess = { r ->
                         val reply = r.text.trim().replace("\n", " ").take(60)
-                        p.success to x.t("✓ Terhubung (${ms} ms). Balasan: \"$reply\"", "✓ Connected (${ms} ms). Reply: \"$reply\"")
+                        p.success to tx.t("✓ Terhubung (${ms} ms). Balasan: \"$reply\"", "✓ Connected (${ms} ms). Reply: \"$reply\"")
                     },
                     onFailure = { e -> p.destructive to "✗ " + (e.message ?: e.javaClass.simpleName).take(300) }
                 )
@@ -416,10 +416,10 @@ internal class ModelSettingsPage(
 
     private fun deleteKey() {
         MaterialAlertDialogBuilder(activity)
-            .setTitle(x.t("Hapus key?", "Delete key?"))
-            .setMessage(x.t("API Key untuk ${providerName(provider)} akan dihapus dari perangkat ini.", "The API key for ${providerName(provider)} will be removed from this device."))
-            .setNegativeButton(x.t("Batal", "Cancel"), null)
-            .setPositiveButton(x.t("Hapus", "Delete")) { _, _ ->
+            .setTitle(tx.t("Hapus key?", "Delete key?"))
+            .setMessage(tx.t("API Key untuk ${providerName(provider)} akan dihapus dari perangkat ini.", "The API key for ${providerName(provider)} will be removed from this device."))
+            .setNegativeButton(tx.t("Batal", "Cancel"), null)
+            .setPositiveButton(tx.t("Hapus", "Delete")) { _, _ ->
                 config.clearApiKey(provider)
                 draftKey.remove(provider)
                 testState = null
@@ -431,10 +431,10 @@ internal class ModelSettingsPage(
 
     private fun deleteAllKeys() {
         MaterialAlertDialogBuilder(activity)
-            .setTitle(x.t("Hapus semua key?", "Delete all keys?"))
-            .setMessage(x.t("Semua API Key dan profil tersimpan akan dihapus dari perangkat ini.", "All API keys and saved profiles will be removed from this device."))
-            .setNegativeButton(x.t("Batal", "Cancel"), null)
-            .setPositiveButton(x.t("Hapus semua", "Delete all")) { _, _ ->
+            .setTitle(tx.t("Hapus semua key?", "Delete all keys?"))
+            .setMessage(tx.t("Semua API Key dan profil tersimpan akan dihapus dari perangkat ini.", "All API keys and saved profiles will be removed from this device."))
+            .setNegativeButton(tx.t("Batal", "Cancel"), null)
+            .setPositiveButton(tx.t("Hapus semua", "Delete all")) { _, _ ->
                 config.clearAllApiKeys()
                 draftKey.clear()
                 testState = null

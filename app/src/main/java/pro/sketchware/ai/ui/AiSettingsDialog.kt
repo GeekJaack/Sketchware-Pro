@@ -75,7 +75,7 @@ object AiSettingsDialog {
         )
 
         // 2. Model & API Key summary + shortcut to its own page
-        val x = ExtText(config.agentLanguage)
+        val tx = ExtText(config.agentLanguage)
         val modelCard = kit.card()
         root.addView(modelCard)
         fun renderModelCard() {
@@ -90,10 +90,10 @@ object AiSettingsDialog {
                     addView(kit.text(active.displayName + if (key.isNotEmpty()) "  ·  " + AiConfigManager.maskApiKey(key) else "", 12f, deer.mutedForeground, maxLines = 2).apply { setPadding(0, kit.dp(2), 0, 0) })
                 }, kit.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 val c = if (ready) deer.success else deer.warning
-                addView(kit.pill(if (ready) x.t("Siap", "Ready") else x.t("Belum diatur", "Not set"), c, kit.alpha(c, 40)))
+                addView(kit.pill(if (ready) tx.t("Siap", "Ready") else tx.t("Belum diatur", "Not set"), c, kit.alpha(c, 40)))
             })
             if (activity != null) {
-                modelCard.addView(kit.button(x.t("Kelola API Key & Model", "Manage API key & model"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_key) {
+                modelCard.addView(kit.button(tx.t("Kelola API Key & Model", "Manage API key & model"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_key) {
                     ModelSettingsPage(activity, onChanged = { onSaved?.invoke() }, onClosed = { renderModelCard() }).show()
                 }, kit.lpMargin(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, t = 10))
             }
@@ -102,7 +102,7 @@ object AiSettingsDialog {
 
         // 3. Dedicated pages for extensions
         if (activity != null) {
-            root.addView(kit.sectionLabel(x.t("Ekstensi", "Extensions")))
+            root.addView(kit.sectionLabel(tx.t("Ekstensi", "Extensions")))
             root.addView(kit.row().apply {
                 addView(kit.button("Skills", ButtonKind.OUTLINE, R.drawable.ic_mtrl_star) { SkillsPage(activity, null) { onSaved?.invoke() }.show() }, kit.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                 addView(kit.button("Plugin", ButtonKind.OUTLINE, R.drawable.ic_mtrl_puzzle) { PluginsPage(activity) { onSaved?.invoke() }.show() }, kit.lpMargin(0, ViewGroup.LayoutParams.WRAP_CONTENT, l = 8, weight = 1f))
@@ -111,7 +111,7 @@ object AiSettingsDialog {
         }
 
         // 4. Agent execution
-        root.addView(kit.sectionLabel(x.t("Eksekusi agent", "Agent execution")))
+        root.addView(kit.sectionLabel(tx.t("Eksekusi agent", "Agent execution")))
         val cbUnlimitedSteps = MaterialCheckBox(context).apply {
             text = "♾️ Langkah Long-Horizon Tidak Terbatas (Unlimited Steps — Biarkan AI Agent Bekerja Otonom Hingga Selesai)"
             isChecked = config.unlimitedSteps

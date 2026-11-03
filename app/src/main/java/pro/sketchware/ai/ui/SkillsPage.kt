@@ -34,23 +34,23 @@ internal class SkillsPage(
 ) {
 
     override fun filters(): List<FilterDef> = listOf(
-        FilterDef("all", x.t("Semua", "All")),
-        FilterDef("enabled", x.t("Aktif", "Enabled")),
-        FilterDef("builtin", x.t("Bawaan", "Built-in")),
-        FilterDef("custom", x.t("Kustom", "Custom")),
-        FilterDef("plugin", x.t("Dari plugin", "From plugins"))
+        FilterDef("all", tx.t("Semua", "All")),
+        FilterDef("enabled", tx.t("Aktif", "Enabled")),
+        FilterDef("builtin", tx.t("Bawaan", "Built-in")),
+        FilterDef("custom", tx.t("Kustom", "Custom")),
+        FilterDef("plugin", tx.t("Dari plugin", "From plugins"))
     )
 
     override fun actions(): List<View> = listOf(
-        ui.button(x.t("Skill baru", "New skill"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_add) { showEditor(null) },
-        ui.button(x.t("Impor dari URL", "Import from URL"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_download) { showImportUrl() }
+        ui.button(tx.t("Skill baru", "New skill"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_add) { showEditor(null) },
+        ui.button(tx.t("Impor dari URL", "Import from URL"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_download) { showImportUrl() }
     )
 
     override fun emptyView(): View = ui.emptyState(
         R.drawable.ic_mtrl_star,
-        x.t("Belum ada skill", "No skills yet"),
-        x.t("Skill adalah berkas SKILL.md berisi panduan yang dibaca agent saat tugas cocok.", "A skill is a SKILL.md file with guidance the agent reads when a task matches."),
-        x.t("Buat skill", "Create skill")
+        tx.t("Belum ada skill", "No skills yet"),
+        tx.t("Skill adalah berkas SKILL.md berisi panduan yang dibaca agent saat tugas cocok.", "A skill is a SKILL.md file with guidance the agent reads when a task matches."),
+        tx.t("Buat skill", "Create skill")
     ) { showEditor(null) }
 
     override fun renderItems(box: LinearLayout, query: String, filterKey: String): ListStats {
@@ -73,14 +73,14 @@ internal class SkillsPage(
     private fun card(s: AgentSkill): View {
         val kind = CapabilityLogic.skillKind(s.source, s.id)
         val label = when (kind) {
-            SourceKind.BUILTIN -> x.t("Bawaan", "Built-in")
-            SourceKind.CUSTOM -> x.t("Kustom", "Custom")
-            SourceKind.PLUGIN -> x.t("Plugin", "Plugin") + ": " + (CapabilityLogic.pluginIdOf(s.source) ?: "?")
+            SourceKind.BUILTIN -> tx.t("Bawaan", "Built-in")
+            SourceKind.CUSTOM -> tx.t("Kustom", "Custom")
+            SourceKind.PLUGIN -> tx.t("Plugin", "Plugin") + ": " + (CapabilityLogic.pluginIdOf(s.source) ?: "?")
         }
         val actions = ArrayList<View>()
-        actions += ui.button(if (kind == SourceKind.PLUGIN) x.t("Lihat", "View") else x.t("Lihat / Edit", "View / Edit"), ButtonKind.TEXT) { showViewer(s, kind) }
+        actions += ui.button(if (kind == SourceKind.PLUGIN) tx.t("Lihat", "View") else tx.t("Lihat / Edit", "View / Edit"), ButtonKind.TEXT) { showViewer(s, kind) }
         if (onUseInChat != null && s.enabled) {
-            actions += ui.button(x.t("Pakai di chat", "Use in chat"), ButtonKind.TEXT) {
+            actions += ui.button(tx.t("Pakai di chat", "Use in chat"), ButtonKind.TEXT) {
                 onUseInChat.invoke(
                     "Gunakan skill '${s.id}' (panggil use_skill(action=\"read\", skill_id=\"${s.id}\")) untuk menyelesaikan tugas berikut: "
                 )
@@ -88,11 +88,11 @@ internal class SkillsPage(
             }
         }
         if (kind != SourceKind.PLUGIN) {
-            actions += ui.button(x.t("Hapus", "Delete"), ButtonKind.DANGER) {
+            actions += ui.button(tx.t("Hapus", "Delete"), ButtonKind.DANGER) {
                 confirm(
-                    x.t("Hapus skill?", "Delete skill?"),
-                    x.t("Skill '${s.name}' akan dihapus permanen.", "Skill '${s.name}' will be deleted permanently."),
-                    x.t("Hapus", "Delete")
+                    tx.t("Hapus skill?", "Delete skill?"),
+                    tx.t("Skill '${s.name}' akan dihapus permanen.", "Skill '${s.name}' will be deleted permanently."),
+                    tx.t("Hapus", "Delete")
                 ) {
                     SkillManager.deleteSkill(s.id)
                     refresh()
@@ -123,7 +123,7 @@ internal class SkillsPage(
     }
 
     private fun showViewer(s: AgentSkill, kind: SourceKind) {
-        val content = readSource(s).ifBlank { x.t("(berkas SKILL.md kosong atau tidak ditemukan)", "(SKILL.md is empty or missing)") }
+        val content = readSource(s).ifBlank { tx.t("(berkas SKILL.md kosong atau tidak ditemukan)", "(SKILL.md is empty or missing)") }
         val body = ui.text(content, 12f, p.foreground, mono = true).apply {
             setTextIsSelectable(true)
             setLineSpacing(0f, 1.15f)
@@ -131,45 +131,45 @@ internal class SkillsPage(
         val builder = MaterialAlertDialogBuilder(activity)
             .setTitle(s.name)
             .setView(formBox(body))
-            .setNegativeButton(x.t("Tutup", "Close"), null)
+            .setNegativeButton(tx.t("Tutup", "Close"), null)
         if (kind != SourceKind.PLUGIN) {
-            builder.setPositiveButton(x.t("Edit", "Edit")) { _, _ -> showEditor(s) }
+            builder.setPositiveButton(tx.t("Edit", "Edit")) { _, _ -> showEditor(s) }
         }
         builder.show()
     }
 
     private fun showEditor(existing: AgentSkill?) {
-        val name = ui.field(x.t("Nama skill", "Skill name"), existing?.name.orEmpty())
+        val name = ui.field(tx.t("Nama skill", "Skill name"), existing?.name.orEmpty())
         if (existing != null) name.edit.isEnabled = false
-        val desc = ui.field(x.t("Deskripsi singkat (kapan skill dipakai)", "Short description (when to use it)"), existing?.description.orEmpty())
+        val desc = ui.field(tx.t("Deskripsi singkat (kapan skill dipakai)", "Short description (when to use it)"), existing?.description.orEmpty())
         val body = ui.field(
-            x.t("Isi SKILL.md (Markdown)", "SKILL.md content (Markdown)"),
+            tx.t("Isi SKILL.md (Markdown)", "SKILL.md content (Markdown)"),
             existing?.let { readSource(it) }.orEmpty(), mono = true, lines = 10
         )
         formDialog(
-            if (existing == null) x.t("Skill baru", "New skill") else x.t("Edit skill", "Edit skill"),
+            if (existing == null) tx.t("Skill baru", "New skill") else tx.t("Edit skill", "Edit skill"),
             formBox(name.layout, desc.layout, body.layout),
-            x.t("Simpan", "Save")
+            tx.t("Simpan", "Save")
         ) {
             val n = name.edit.text?.toString()?.trim().orEmpty()
             val d = desc.edit.text?.toString()?.trim().orEmpty()
             val b = body.edit.text?.toString()?.trim().orEmpty()
             if (n.isEmpty() || b.isEmpty()) {
-                toast(x.t("Nama dan isi SKILL.md wajib diisi.", "Name and SKILL.md content are required."))
+                toast(tx.t("Nama dan isi SKILL.md wajib diisi.", "Name and SKILL.md content are required."))
                 return@formDialog false
             }
             try {
                 SkillManager.createOrUpdateSkill(
                     id = existing?.id ?: SkillManager.sanitizeId(n),
                     name = n,
-                    description = d.ifBlank { x.t("Panduan khusus untuk $n", "Guidance for $n") },
+                    description = d.ifBlank { tx.t("Panduan khusus untuk $n", "Guidance for $n") },
                     bodyMarkdown = b
                 )
             } catch (e: IllegalArgumentException) {
                 toast(e.message ?: "Error")
                 return@formDialog false
             }
-            toast(x.t("Skill '$n' disimpan.", "Skill '$n' saved."))
+            toast(tx.t("Skill '$n' disimpan.", "Skill '$n' saved."))
             refresh()
             true
         }
@@ -178,16 +178,16 @@ internal class SkillsPage(
     private fun showImportUrl() {
         val url = ui.field("URL SKILL.md (https://…)")
         val hint = ui.text(
-            x.t("Tempel tautan langsung ke berkas SKILL.md (mis. dari GitHub raw).", "Paste a direct link to a SKILL.md file (for example a GitHub raw URL)."),
+            tx.t("Tempel tautan langsung ke berkas SKILL.md (mis. dari GitHub raw).", "Paste a direct link to a SKILL.md file (for example a GitHub raw URL)."),
             12f, p.mutedForeground
         )
-        formDialog(x.t("Impor skill", "Import skill"), formBox(url.layout, hint), x.t("Impor", "Import")) {
+        formDialog(tx.t("Impor skill", "Import skill"), formBox(url.layout, hint), tx.t("Impor", "Import")) {
             val u = url.edit.text?.toString()?.trim().orEmpty()
             if (!(u.startsWith("http://") || u.startsWith("https://"))) {
-                toast(x.t("Masukkan URL yang diawali http:// atau https://", "Enter a URL starting with http:// or https://"))
+                toast(tx.t("Masukkan URL yang diawali http:// atau https://", "Enter a URL starting with http:// or https://"))
                 return@formDialog false
             }
-            toast(x.t("Mengunduh skill…", "Downloading skill…"))
+            toast(tx.t("Mengunduh skill…", "Downloading skill…"))
             runInBackground({ SkillManager.installSkillFromUrl(u) }) { result ->
                 toast(result.getOrElse { it.message ?: "Error" })
                 refresh()

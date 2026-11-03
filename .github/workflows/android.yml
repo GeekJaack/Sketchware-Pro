@@ -44,10 +44,10 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E "^e: |: error: |FAILED|AssertionError|AssertionFailedError|What went wrong" build.log | sed 's#file:///home/runner/work/[^/]*/[^/]*/##' | awk '!seen[$0]++' | head -60 > errors.txt || true
+          grep -E "^e: |: error: |FAILED|AssertionError|AssertionFailedError|What went wrong" build.log | sed 's#file:///home/runner/work/[^/]*/[^/]*/##' | awk '!seen[$0]++' | head -150 > errors.txt || true
           python3 - <<'EOF'
           lines = [l.strip()[:400] for l in open('errors.txt') if l.strip()]
-          chunks = [lines[i:i+6] for i in range(0, len(lines), 6)][:9]
+          chunks = [lines[i:i+15] for i in range(0, len(lines), 15)][:9]
           for c in chunks:
               print("::error::" + "%0A".join(c))
           if not chunks:

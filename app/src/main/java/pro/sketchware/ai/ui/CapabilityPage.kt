@@ -48,7 +48,7 @@ internal abstract class CapabilityPage(
     protected val isDark: Boolean = ColorUtils.calculateLuminance(ThemeUtils.getColor(activity, MR.attr.colorSurface)) < 0.5
     protected val p: DeerPalette = DeerFlowTheme.palette(isDark)
     protected val ui = DeerUi(activity, p, isDark)
-    protected val x = ExtText(config.agentLanguage)
+    protected val tx = ExtText(config.agentLanguage)
 
     private val dialog = Dialog(activity, android.R.style.Theme_DeviceDefault_NoActionBar)
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
@@ -85,15 +85,15 @@ internal abstract class CapabilityPage(
         listBox.removeAllViews()
         val stats = renderItems(listBox, query, filterKey)
         summary.text = if (stats.total == 0) "" else
-            x.enabledOfTotal(stats.enabled, stats.total) + if (stats.shown != stats.total) "  ·  " + x.t("${stats.shown} ditampilkan", "${stats.shown} shown") else ""
+            tx.enabledOfTotal(stats.enabled, stats.total) + if (stats.shown != stats.total) "  ·  " + tx.t("${stats.shown} ditampilkan", "${stats.shown} shown") else ""
         if (stats.total == 0) {
             listBox.addView(emptyView())
         } else if (stats.shown == 0) {
             listBox.addView(
                 ui.emptyState(
                     R.drawable.ic_mtrl_search,
-                    x.t("Tidak ada hasil", "No results"),
-                    x.t("Coba kata kunci atau filter lain.", "Try another keyword or filter.")
+                    tx.t("Tidak ada hasil", "No results"),
+                    tx.t("Coba kata kunci atau filter lain.", "Try another keyword or filter.")
                 )
             )
         }
@@ -105,7 +105,7 @@ internal abstract class CapabilityPage(
         MaterialAlertDialogBuilder(activity)
             .setTitle(title)
             .setMessage(message)
-            .setNegativeButton(x.t("Batal", "Cancel"), null)
+            .setNegativeButton(tx.t("Batal", "Cancel"), null)
             .setPositiveButton(positive) { _, _ -> onYes() }
             .show()
     }
@@ -125,7 +125,7 @@ internal abstract class CapabilityPage(
         val d = MaterialAlertDialogBuilder(activity)
             .setTitle(title)
             .setView(content)
-            .setNegativeButton(x.t("Batal", "Cancel"), null)
+            .setNegativeButton(tx.t("Batal", "Cancel"), null)
             .setPositiveButton(positive, null)
             .create()
         d.setOnShowListener {
@@ -166,7 +166,7 @@ internal abstract class CapabilityPage(
                 background = ui.ripple(null, 22)
                 isClickable = true
                 isFocusable = true
-                contentDescription = x.t("Tutup", "Close")
+                contentDescription = tx.t("Tutup", "Close")
                 setOnClickListener { dismiss() }
             })
         })
@@ -184,7 +184,7 @@ internal abstract class CapabilityPage(
         }
 
         root.addView(
-            ui.searchField(x.t("Cari…", "Search…")) { q ->
+            ui.searchField(tx.t("Cari…", "Search…")) { q ->
                 query = q
                 refresh()
             },

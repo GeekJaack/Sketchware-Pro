@@ -33,23 +33,23 @@ internal class McpPage(
     private val expanded = HashSet<String>()
 
     override fun filters(): List<FilterDef> = listOf(
-        FilterDef("all", x.t("Semua", "All")),
-        FilterDef("connected", x.t("Terhubung", "Connected")),
-        FilterDef("issues", x.t("Perlu perhatian", "Needs attention")),
-        FilterDef("builtin", x.t("Bawaan", "Built-in")),
-        FilterDef("custom", x.t("Kustom", "Custom"))
+        FilterDef("all", tx.t("Semua", "All")),
+        FilterDef("connected", tx.t("Terhubung", "Connected")),
+        FilterDef("issues", tx.t("Perlu perhatian", "Needs attention")),
+        FilterDef("builtin", tx.t("Bawaan", "Built-in")),
+        FilterDef("custom", tx.t("Kustom", "Custom"))
     )
 
     override fun actions(): List<View> = listOf(
-        ui.button(x.t("Konektor baru", "New connector"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_add) { showEditor(null) },
-        ui.button(x.t("Sinkron semua", "Sync all"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_sync) { syncAll() }
+        ui.button(tx.t("Konektor baru", "New connector"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_add) { showEditor(null) },
+        ui.button(tx.t("Sinkron semua", "Sync all"), ButtonKind.OUTLINE, R.drawable.ic_mtrl_sync) { syncAll() }
     )
 
     override fun emptyView(): View = ui.emptyState(
         R.drawable.ic_mtrl_link,
-        x.t("Belum ada konektor", "No connectors yet"),
-        x.t("Tambahkan server MCP agar tool-nya muncul di agent.", "Add an MCP server so its tools show up in the agent."),
-        x.t("Tambah konektor", "Add connector")
+        tx.t("Belum ada konektor", "No connectors yet"),
+        tx.t("Tambahkan server MCP agar tool-nya muncul di agent.", "Add an MCP server so its tools show up in the agent."),
+        tx.t("Tambah konektor", "Add connector")
     ) { showEditor(null) }
 
     override fun renderItems(box: LinearLayout, query: String, filterKey: String): ListStats {
@@ -75,14 +75,14 @@ internal class McpPage(
         val kind = CapabilityLogic.mcpKind(c.source)
         val st = state(c)
         val (dot, statusText) = when (st) {
-            McpState.CONNECTED -> p.success to x.t("Terhubung", "Connected")
-            McpState.ERROR -> p.destructive to x.t("Gagal sinkron", "Sync failed")
-            McpState.IDLE -> p.warning to x.t("Belum disinkronkan", "Not synced yet")
-            McpState.DISABLED -> p.mutedForeground to x.t("Nonaktif", "Disabled")
+            McpState.CONNECTED -> p.success to tx.t("Terhubung", "Connected")
+            McpState.ERROR -> p.destructive to tx.t("Gagal sinkron", "Sync failed")
+            McpState.IDLE -> p.warning to tx.t("Belum disinkronkan", "Not synced yet")
+            McpState.DISABLED -> p.mutedForeground to tx.t("Nonaktif", "Disabled")
         }
         val label = when (kind) {
-            SourceKind.BUILTIN -> x.t("Bawaan", "Built-in")
-            SourceKind.CUSTOM -> x.t("Kustom", "Custom")
+            SourceKind.BUILTIN -> tx.t("Bawaan", "Built-in")
+            SourceKind.CUSTOM -> tx.t("Kustom", "Custom")
             SourceKind.PLUGIN -> "Plugin: " + (CapabilityLogic.pluginIdOf(c.source) ?: "?")
         }
         val chips = ArrayList<String>()
@@ -93,19 +93,19 @@ internal class McpPage(
         val isOpen = c.id in expanded
         val actions = ArrayList<View>()
         if (c.cachedTools.isNotEmpty()) {
-            actions += ui.button((if (isOpen) x.t("Sembunyikan tool", "Hide tools") else "Tools (${c.cachedTools.size})"), ButtonKind.TEXT) {
+            actions += ui.button((if (isOpen) tx.t("Sembunyikan tool", "Hide tools") else "Tools (${c.cachedTools.size})"), ButtonKind.TEXT) {
                 if (isOpen) expanded.remove(c.id) else expanded.add(c.id)
                 refresh()
             }
         }
-        actions += ui.button(x.t("Sinkron", "Sync"), ButtonKind.TEXT, R.drawable.ic_mtrl_sync) { syncOne(c) }
-        if (kind == SourceKind.CUSTOM) actions += ui.button(x.t("Edit", "Edit"), ButtonKind.TEXT) { showEditor(c) }
+        actions += ui.button(tx.t("Sinkron", "Sync"), ButtonKind.TEXT, R.drawable.ic_mtrl_sync) { syncOne(c) }
+        if (kind == SourceKind.CUSTOM) actions += ui.button(tx.t("Edit", "Edit"), ButtonKind.TEXT) { showEditor(c) }
         if (kind != SourceKind.PLUGIN) {
-            actions += ui.button(x.t("Hapus", "Delete"), ButtonKind.DANGER) {
+            actions += ui.button(tx.t("Hapus", "Delete"), ButtonKind.DANGER) {
                 confirm(
-                    x.t("Hapus konektor?", "Delete connector?"),
-                    x.t("Konektor '${c.name}' akan dihapus.", "Connector '${c.name}' will be removed."),
-                    x.t("Hapus", "Delete")
+                    tx.t("Hapus konektor?", "Delete connector?"),
+                    tx.t("Konektor '${c.name}' akan dihapus.", "Connector '${c.name}' will be removed."),
+                    tx.t("Hapus", "Delete")
                 ) {
                     McpClientHub.removeConnector(c.id)
                     expanded.remove(c.id)
@@ -150,7 +150,7 @@ internal class McpPage(
     // ---------- actions ----------
 
     private fun syncOne(c: McpConnectorConfig) {
-        toast(x.t("Menyinkronkan '${c.name}'…", "Syncing '${c.name}'…"))
+        toast(tx.t("Menyinkronkan '${c.name}'…", "Syncing '${c.name}'…"))
         runInBackground({ McpClientHub.syncConnectorTools(c.id) }) { result ->
             val msg = result.getOrElse { it.message ?: "Error" }
             toast(msg.lines().firstOrNull() ?: msg)
@@ -161,37 +161,37 @@ internal class McpPage(
     private fun syncAll() {
         val enabled = McpClientHub.listConnectors().filter { it.enabled }
         if (enabled.isEmpty()) {
-            toast(x.t("Tidak ada konektor aktif.", "No enabled connectors."))
+            toast(tx.t("Tidak ada konektor aktif.", "No enabled connectors."))
             return
         }
-        toast(x.t("Menyinkronkan ${enabled.size} konektor…", "Syncing ${enabled.size} connectors…"))
+        toast(tx.t("Menyinkronkan ${enabled.size} konektor…", "Syncing ${enabled.size} connectors…"))
         runInBackground({ enabled.forEach { McpClientHub.syncConnectorTools(it.id) } }) {
-            toast(x.t("Sinkronisasi selesai.", "Sync finished."))
+            toast(tx.t("Sinkronisasi selesai.", "Sync finished."))
             refresh()
         }
     }
 
     private fun showEditor(existing: McpConnectorConfig?) {
         var transport = existing?.transport ?: "http"
-        val name = ui.field(x.t("Nama konektor", "Connector name"), existing?.name.orEmpty())
+        val name = ui.field(tx.t("Nama konektor", "Connector name"), existing?.name.orEmpty())
         if (existing != null) name.edit.isEnabled = false
         val target = ui.field("", existing?.let { if (it.transport == "stdio") it.command else it.url }.orEmpty(), mono = true)
         val token = ui.field(
-            if (existing != null && existing.headers.isNotEmpty()) x.t("Token Authorization (kosongkan untuk mempertahankan)", "Authorization token (leave empty to keep)")
-            else x.t("Token Authorization (opsional)", "Authorization token (optional)"),
+            if (existing != null && existing.headers.isNotEmpty()) tx.t("Token Authorization (kosongkan untuk mempertahankan)", "Authorization token (leave empty to keep)")
+            else tx.t("Token Authorization (opsional)", "Authorization token (optional)"),
             password = true
         )
         val inLinux = ui.switchView(existing?.inLinux ?: true) {}
         val inLinuxRow = ui.row().apply {
             setPadding(0, 0, 0, ui.dp(10))
-            addView(ui.text(x.t("Jalankan di dalam Linux (proot)", "Run inside Linux (proot)"), 13.5f, p.foreground), ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(ui.text(tx.t("Jalankan di dalam Linux (proot)", "Run inside Linux (proot)"), 13.5f, p.foreground), ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             addView(inLinux)
         }
         val transportRow = ui.row().apply { setPadding(0, 0, 0, ui.dp(12)) }
 
         fun applyTransport() {
-            target.layout.hint = if (transport == "http") x.t("URL server MCP (https://…)", "MCP server URL (https://…)")
-            else x.t("Perintah (mis. npx -y @modelcontextprotocol/server-filesystem /sdcard)", "Command (e.g. npx -y @modelcontextprotocol/server-filesystem /sdcard)")
+            target.layout.hint = if (transport == "http") tx.t("URL server MCP (https://…)", "MCP server URL (https://…)")
+            else tx.t("Perintah (mis. npx -y @modelcontextprotocol/server-filesystem /sdcard)", "Command (e.g. npx -y @modelcontextprotocol/server-filesystem /sdcard)")
             token.layout.visibility = if (transport == "http") View.VISIBLE else View.GONE
             inLinuxRow.visibility = if (transport == "stdio") View.VISIBLE else View.GONE
             transportRow.removeAllViews()
@@ -208,19 +208,19 @@ internal class McpPage(
         applyTransport()
 
         formDialog(
-            if (existing == null) x.t("Konektor baru", "New connector") else x.t("Edit konektor", "Edit connector"),
+            if (existing == null) tx.t("Konektor baru", "New connector") else tx.t("Edit konektor", "Edit connector"),
             formBox(name.layout, transportRow, target.layout, token.layout, inLinuxRow),
-            x.t("Simpan", "Save")
+            tx.t("Simpan", "Save")
         ) {
             val n = name.edit.text?.toString()?.trim().orEmpty()
             val t = target.edit.text?.toString()?.trim().orEmpty()
             val tok = token.edit.text?.toString()?.trim().orEmpty()
             if (n.isEmpty() || t.isEmpty()) {
-                toast(x.t("Nama dan URL/perintah wajib diisi.", "Name and URL/command are required."))
+                toast(tx.t("Nama dan URL/perintah wajib diisi.", "Name and URL/command are required."))
                 return@formDialog false
             }
             if (transport == "http" && !(t.startsWith("http://") || t.startsWith("https://"))) {
-                toast(x.t("URL harus diawali http:// atau https://", "The URL must start with http:// or https://"))
+                toast(tx.t("URL harus diawali http:// atau https://", "The URL must start with http:// or https://"))
                 return@formDialog false
             }
             val headers = when {

@@ -30,20 +30,20 @@ internal class PluginsPage(
 ) {
 
     override fun filters(): List<FilterDef> = listOf(
-        FilterDef("all", x.t("Semua", "All")),
-        FilterDef("enabled", x.t("Aktif", "Enabled")),
-        FilterDef("disabled", x.t("Nonaktif", "Disabled"))
+        FilterDef("all", tx.t("Semua", "All")),
+        FilterDef("enabled", tx.t("Aktif", "Enabled")),
+        FilterDef("disabled", tx.t("Nonaktif", "Disabled"))
     )
 
     override fun actions(): List<View> = listOf(
-        ui.button(x.t("Pasang plugin", "Install plugin"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_add) { showInstall() }
+        ui.button(tx.t("Pasang plugin", "Install plugin"), ButtonKind.PRIMARY, R.drawable.ic_mtrl_add) { showInstall() }
     )
 
     override fun emptyView(): View = ui.emptyState(
         R.drawable.ic_mtrl_puzzle,
-        x.t("Belum ada plugin", "No plugins yet"),
-        x.t("Pasang plugin dari berkas .zip, folder, atau URL plugin.json.", "Install a plugin from a .zip file, a folder, or a plugin.json URL."),
-        x.t("Pasang plugin", "Install plugin")
+        tx.t("Belum ada plugin", "No plugins yet"),
+        tx.t("Pasang plugin dari berkas .zip, folder, atau URL plugin.json.", "Install a plugin from a .zip file, a folder, or a plugin.json URL."),
+        tx.t("Pasang plugin", "Install plugin")
     ) { showInstall() }
 
     override fun renderItems(box: LinearLayout, query: String, filterKey: String): ListStats {
@@ -66,17 +66,17 @@ internal class PluginsPage(
     private fun card(pl: AgentPlugin): View {
         val chips = ArrayList<String>()
         if (pl.skillIds.isNotEmpty()) chips += "${pl.skillIds.size} skill"
-        if (pl.slashCommands.isNotEmpty()) chips += "${pl.slashCommands.size} " + x.t("perintah", "commands")
+        if (pl.slashCommands.isNotEmpty()) chips += "${pl.slashCommands.size} " + tx.t("perintah", "commands")
         if (pl.mcpConnectorIds.isNotEmpty()) chips += "${pl.mcpConnectorIds.size} MCP"
         val actions = listOf(
-            ui.button(x.t("Detail", "Details"), ButtonKind.TEXT) { showDetail(pl) },
-            ui.button(x.t("Hapus", "Delete"), ButtonKind.DANGER) {
+            ui.button(tx.t("Detail", "Details"), ButtonKind.TEXT) { showDetail(pl) },
+            ui.button(tx.t("Hapus", "Delete"), ButtonKind.DANGER) {
                 confirm(
-                    x.t("Hapus plugin?", "Delete plugin?"),
-                    x.t("Plugin '${pl.name}' dan berkasnya akan dihapus permanen.", "Plugin '${pl.name}' and its files will be deleted permanently."),
-                    x.t("Hapus", "Delete")
+                    tx.t("Hapus plugin?", "Delete plugin?"),
+                    tx.t("Plugin '${pl.name}' dan berkasnya akan dihapus permanen.", "Plugin '${pl.name}' and its files will be deleted permanently."),
+                    tx.t("Hapus", "Delete")
                 ) {
-                    toast(if (PluginManager.deletePlugin(pl.id)) x.t("Plugin dihapus.", "Plugin deleted.") else x.t("Gagal menghapus plugin.", "Could not delete the plugin."))
+                    toast(if (PluginManager.deletePlugin(pl.id)) tx.t("Plugin dihapus.", "Plugin deleted.") else tx.t("Gagal menghapus plugin.", "Could not delete the plugin."))
                     refresh()
                 }
             }
@@ -92,7 +92,7 @@ internal class PluginsPage(
                 refresh()
             },
             chips = chips,
-            monoLine = if (pl.author.isNotBlank()) x.t("oleh ${pl.author}", "by ${pl.author}") + " · " + pl.id else pl.id,
+            monoLine = if (pl.author.isNotBlank()) tx.t("oleh ${pl.author}", "by ${pl.author}") + " · " + pl.id else pl.id,
             actions = actions
         )
     }
@@ -108,33 +108,33 @@ internal class PluginsPage(
             views += ui.sectionLabel(label)
             lines.forEach { views += ui.text(it, 12.5f, p.foreground, mono = true).apply { setPadding(0, 0, 0, ui.dp(4)) } }
         }
-        section(x.t("Perintah slash", "Slash commands"), pl.slashCommands.map { "/${it.command.removePrefix("/")}  ${it.title}" })
+        section(tx.t("Perintah slash", "Slash commands"), pl.slashCommands.map { "/${it.command.removePrefix("/")}  ${it.title}" })
         section("Skill", pl.skillIds)
-        section(x.t("Konektor MCP", "MCP connectors"), pl.mcpConnectorIds)
+        section(tx.t("Konektor MCP", "MCP connectors"), pl.mcpConnectorIds)
         if (pl.systemPromptAppend.isNotBlank()) {
-            section(x.t("Tambahan system prompt", "System prompt addition"), listOf(pl.systemPromptAppend.trim().take(600) + if (pl.systemPromptAppend.length > 600) "…" else ""))
+            section(tx.t("Tambahan system prompt", "System prompt addition"), listOf(pl.systemPromptAppend.trim().take(600) + if (pl.systemPromptAppend.length > 600) "…" else ""))
         }
-        if (views.size <= 2) views += ui.text(x.t("Plugin ini tidak menambahkan komponen apa pun.", "This plugin does not contribute any components."), 12.5f, p.mutedForeground)
+        if (views.size <= 2) views += ui.text(tx.t("Plugin ini tidak menambahkan komponen apa pun.", "This plugin does not contribute any components."), 12.5f, p.mutedForeground)
         MaterialAlertDialogBuilder(activity)
             .setTitle(pl.name)
             .setView(formBox(*views.toTypedArray()))
-            .setPositiveButton(x.t("Tutup", "Close"), null)
+            .setPositiveButton(tx.t("Tutup", "Close"), null)
             .show()
     }
 
     private fun showInstall() {
-        val src = ui.field(x.t("Path .zip / folder, atau URL plugin.json", "Path to .zip / folder, or plugin.json URL"))
+        val src = ui.field(tx.t("Path .zip / folder, atau URL plugin.json", "Path to .zip / folder, or plugin.json URL"))
         val hint = ui.text(
-            x.t("Contoh: /storage/emulated/0/Download/plugin.zip atau https://…/plugin.json", "Example: /storage/emulated/0/Download/plugin.zip or https://…/plugin.json"),
+            tx.t("Contoh: /storage/emulated/0/Download/plugin.zip atau https://…/plugin.json", "Example: /storage/emulated/0/Download/plugin.zip or https://…/plugin.json"),
             12f, p.mutedForeground
         )
-        formDialog(x.t("Pasang plugin", "Install plugin"), formBox(src.layout, hint), x.t("Pasang", "Install")) {
+        formDialog(tx.t("Pasang plugin", "Install plugin"), formBox(src.layout, hint), tx.t("Pasang", "Install")) {
             val s = src.edit.text?.toString()?.trim().orEmpty()
             if (s.isEmpty()) {
-                toast(x.t("Masukkan path atau URL terlebih dahulu.", "Enter a path or URL first."))
+                toast(tx.t("Masukkan path atau URL terlebih dahulu.", "Enter a path or URL first."))
                 return@formDialog false
             }
-            toast(x.t("Memasang plugin…", "Installing plugin…"))
+            toast(tx.t("Memasang plugin…", "Installing plugin…"))
             runInBackground({ PluginManager.installPluginFromArchiveOrUrl(s) }) { result ->
                 toast(result.getOrElse { it.message ?: "Error" })
                 refresh()
